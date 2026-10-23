@@ -1,0 +1,12 @@
+[package]
+name = "coqc-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "COQD card dataset format: records, container, reader/writer"
+
+[dependencies]
+zstd = "0.13"
+sha2 = "0.10"
+serde_json = "1"

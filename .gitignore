@@ -1,0 +1,21 @@
+# build output
+/target/
+
+# data you download or compile locally (large, reproducible)
+/data/
+*.coqd
+*.coqd.sha256
+*.jsonl
+*.jsonl.gz
+!crates/compiler/tests/fixtures/*.jsonl
+
+# bundles exchanged with Claude (see scripts/package-bundle.sh, ingest-bundle.sh)
+/bundles/
+*.tar.gz
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.env

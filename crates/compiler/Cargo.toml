@@ -1,0 +1,22 @@
+[package]
+name = "coqc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Compiles Scryfall bulk card JSON into a COQD dataset"
+
+[lib]
+name = "coqc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "coqc"
+path = "src/main.rs"
+
+[dependencies]
+coqc-format = { path = "../format" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+zstd = "0.13"

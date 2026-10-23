@@ -1,0 +1,25 @@
+# Changelog
+
+## Unreleased
+
+### Added
+- 2026-10-22, 0.0.1-6: `coqc compile --progress` (stderr progress for both passes and the write) and `--breakdown` (estimated stored bytes per residual key). `scripts/package-bundle.sh` and `scripts/ingest-bundle.sh` (tested end to end in throwaway repos), expanded `.gitignore`, `.bundle-seq`. Real-data run: images 108,668 canonical / 0 raw, file 46.6 MB (was 52.0).
+
+### Fixed
+- 2026-10-22, 0.0.1-5: second real-data run: healed printings 3,981 -> 175, but images still 0% canonical because Scryfall's `jpeg` key points at a `/normal/` URL (JSON key != URL path segment). Image dictionary entries are now `key=segment.ext`. Compile output now lists every distinct image failure shape with counts, and shows a sample value for each large residual key (to design URL derivation). Test extended; 13 pass.
+
+### Fixed
+- 2026-10-22, 0.0.1-4: real-data findings. Images were never canonical because Scryfall added an `art` size served as `.webp` (assumed `.jpg` unless `png`); image dictionary entries are now `key.ext`. 3,716 of 3,981 healed printings were `legalities`, which differ between printings, so legalities moved from the oracle to the printing record. The oracle record now comes from the version most printings agree on instead of the newest printing. Tests added for each (13 total).
+
+### Added
+- 2026-10-22, 0.0.1-3: first real-data run (107,212 printings, verify 0 mismatches, 51.8 MB) showed 0 canonical image sets and 3,981 healed printings. `coqc compile` now prints why image URLs fail the canonical check and ranks healed keys by count with an example card each.
+
+### Fixed
+- 2026-10-22, 0.0.1-2: `scripts/fetch-bulk.sh` read the old `download_uri` field and exited silently; Scryfall's bulk-data response now carries `jsonl_download_uri` (a `.jsonl.gz`). The script now prefers it, gunzips by magic bytes, falls back to `download_uri`, and prints the response if neither exists. Tested offline via `COQC_BULK_META_URL`.
+
+### Added
+- 2026-10-22, 0.0.1-1: Phase 0 prototype. `coqc-format` (records, COQD container, JSON
+  reconstruction) and `coqc` CLI (`compile`, `verify`, `inspect`, `diff`, `synth`). Lossless:
+  every Scryfall key is kept (typed core + residual JSON), `prices` dropped by default.
+  Stable append-only row ids across releases, tombstones, deterministic output, JSONL and
+  JSON-array input. Test fixtures plus a synthetic data generator for scale checks.
