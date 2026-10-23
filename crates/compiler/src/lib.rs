@@ -21,8 +21,18 @@ use std::path::Path;
 pub type Obj = Map<String, Value>;
 pub type Id = [u8; 16];
 
+/// How NEW printing rows are ordered when first assigned (existing rows never move).
+/// `Set` clusters printings of a set so each block holds similar data; `Uuid` is random.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowOrder {
+    #[default]
+    Set,
+    Uuid,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Options {
+    pub row_order: RowOrder,
     /// Ignore the previous release's row ids and dictionaries (new epoch).
     pub rebase: bool,
     /// YYYYMMDD of the source file; stored in the header (0 = unknown).
@@ -656,10 +666,12 @@ fn heal(meta: &Meta, o: &OracleRecord, p: &mut PrintingRecord, orig: &Obj, stats
 
 // --------------------------------------------------------------- compile ---
 
-fn assign_rows(prev: &[Id], current: &BTreeSet<Id>) -> (Vec<Id>, HashMap<Id, u32>) {
+fn assign_rows<K: Ord>(prev: &[Id], current: &BTreeSet<Id>, key: impl Fn(&Id) -> K) -> (Vec<Id>, HashMap<Id, u32>) {
     let mut rows: Vec<Id> = prev.to_vec();
     let known: BTreeSet<Id> = prev.iter().copied().collect();
-    rows.extend(current.iter().filter(|i| !known.contains(*i)));
+    let mut fresh: Vec<Id> = current.iter().filter(|i| !known.contains(*i)).copied().collect();
+    fresh.sort_by_cached_key(|id| (key(id), *id));
+    rows.extend(fresh);
     let map = rows.iter().enumerate().map(|(i, id)| (*id, i as u32)).collect();
     (rows, map)
 }
@@ -684,6 +696,7 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
     let mut vocab: [BTreeSet<String>; 7] = Default::default();
     let mut cands: BTreeMap<Id, Vec<Cand>> = BTreeMap::new();
     let mut printing_ids: BTreeSet<Id> = BTreeSet::new();
+    let mut order_keys: HashMap<Id, (String, u32, String)> = HashMap::new();
     let (lines, errs) = for_each_card(input, |mut card| {
         seen += 1;
         prog.tick("pass 1/2 reading", seen, None);
@@ -699,6 +712,12 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
         }
         if !printing_ids.insert(a.id) {
             stats.duplicate_ids += 1;
+        }
+        if opts.row_order == RowOrder::Set {
+            let set = card.get("set").and_then(Value::as_str).unwrap_or("").to_string();
+            let cn = card.get("collector_number").and_then(Value::as_str).unwrap_or("").to_string();
+            let num = cn.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(u32::MAX);
+            order_keys.insert(a.id, (set, num, cn));
         }
         for (slot, key) in [(0, "layout"), (1, "rarity"), (2, "border_color"), (3, "lang")] {
             if let Some(s) = card.get(key).and_then(Value::as_str) {
@@ -768,8 +787,11 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
     let prev_print: Vec<Id> =
         use_prev.map(|p| p.printings.iter().map(|r| r.scryfall_id).collect()).unwrap_or_default();
     let live_oracle: BTreeSet<Id> = best.keys().copied().collect();
-    let (oracle_rows, oracle_map) = assign_rows(&prev_oracle, &live_oracle);
-    let (print_rows, print_map) = assign_rows(&prev_print, &printing_ids);
+    let (oracle_rows, oracle_map) = assign_rows(&prev_oracle, &live_oracle, |_| ());
+    let (print_rows, print_map) = match opts.row_order {
+        RowOrder::Uuid => assign_rows(&prev_print, &printing_ids, |_| (String::new(), 0u32, String::new())),
+        RowOrder::Set => assign_rows(&prev_print, &printing_ids, |id| order_keys.get(id).cloned().unwrap_or_default()),
+    };
     stats.new_oracle = (oracle_rows.len() - prev_oracle.len()) as u64;
     stats.new_printings = (print_rows.len() - prev_print.len()) as u64;
 
@@ -870,13 +892,25 @@ pub fn verify(ds: &Dataset, input: &Path) -> Result<(u64, u64), String> {
     Ok((checked, bad))
 }
 
-/// Per residual key: (raw bytes, compressed bytes), compressing each key's values
+#[derive(Clone, Debug, Default)]
+pub struct KeyStat {
+    pub raw: u64,
+    pub stored: u64,
+    /// Oracle cards having this key on at least one printing (top keys only).
+    pub oracles_with: u64,
+    /// ...of which the value is NOT identical across all their printings.
+    pub oracles_varied: u64,
+}
+
+/// Per residual key: raw bytes and compressed bytes, compressing each key's values
 /// separately in 256-row groups like the real blocks. Only an estimate of how
 /// much each key contributes to the stored size; it ignores cross-key sharing.
-pub fn breakdown(ds: &Dataset) -> Result<BTreeMap<String, (u64, u64)>, String> {
+/// For the 12 most expensive keys it also measures how many oracle cards have the
+/// same value on every printing (candidates to store once on the oracle record).
+pub fn breakdown(ds: &Dataset) -> Result<BTreeMap<String, KeyStat>, String> {
     let level = coqc_format::container::ZSTD_LEVEL;
     let mut bufs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let mut total: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    let mut total: BTreeMap<String, KeyStat> = BTreeMap::new();
     let mut flush = |bufs: &mut BTreeMap<String, Vec<u8>>| -> Result<(), String> {
         for (k, b) in bufs.iter_mut() {
             if b.is_empty() {
@@ -884,14 +918,20 @@ pub fn breakdown(ds: &Dataset) -> Result<BTreeMap<String, (u64, u64)>, String> {
             }
             let c = zstd::bulk::compress(b, level).map_err(|e| e.to_string())?;
             let t = total.entry(k.clone()).or_default();
-            t.0 += b.len() as u64;
-            t.1 += c.len() as u64;
+            t.raw += b.len() as u64;
+            t.stored += c.len() as u64;
             b.clear();
         }
         Ok(())
     };
+    let parse = |p: &PrintingRecord| -> Option<Obj> {
+        match p.extra.as_deref().map(serde_json::from_str::<Value>) {
+            Some(Ok(Value::Object(m))) => Some(m),
+            _ => None,
+        }
+    };
     for (i, p) in ds.printings.iter().enumerate() {
-        if let Some(Ok(Value::Object(m))) = p.extra.as_deref().map(serde_json::from_str::<Value>) {
+        if let Some(m) = parse(p) {
             for (k, v) in m {
                 let b = bufs.entry(k).or_default();
                 b.extend_from_slice(serde_json::to_string(&v).unwrap_or_default().as_bytes());
@@ -903,5 +943,30 @@ pub fn breakdown(ds: &Dataset) -> Result<BTreeMap<String, (u64, u64)>, String> {
         }
     }
     flush(&mut bufs)?;
+
+    let mut top: Vec<(String, u64)> = total.iter().map(|(k, v)| (k.clone(), v.stored)).collect();
+    top.sort_by(|a, b| b.1.cmp(&a.1));
+    let top: Vec<String> = top.into_iter().take(12).map(|(k, _)| k).collect();
+    let mut seen: HashMap<(u32, u8), (u64, bool)> = HashMap::new();
+    for p in ds.printings.iter().filter(|p| !p.tombstone) {
+        let Some(m) = parse(p) else { continue };
+        for (ki, k) in top.iter().enumerate() {
+            if let Some(v) = m.get(k) {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                serde_json::to_string(v).unwrap_or_default().hash(&mut h);
+                let h = h.finish();
+                let e = seen.entry((p.oracle_row, ki as u8)).or_insert((h, false));
+                if e.0 != h {
+                    e.1 = true;
+                }
+            }
+        }
+    }
+    for ((_, ki), (_, varied)) in &seen {
+        let t = total.get_mut(&top[*ki as usize]).unwrap();
+        t.oracles_with += 1;
+        t.oracles_varied += *varied as u64;
+    }
     Ok(total)
 }

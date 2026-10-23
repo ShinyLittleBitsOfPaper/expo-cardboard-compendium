@@ -1,4 +1,4 @@
-use coqc::{compile, synth, verify, Options};
+use coqc::{compile, synth, verify, Options, RowOrder};
 use coqc_format::container::{block_table, parse};
 use coqc_format::{read, write, SectionId};
 use sha2::{Digest, Sha256};
@@ -12,6 +12,7 @@ coqc - compile Scryfall bulk card data into a COQD dataset
 USAGE:
   coqc compile <input.jsonl|json> -o <out.coqd> [--prev <prev.coqd>] [--rebase]
                [--source-date YYYYMMDD] [--keep-prices] [--progress] [--breakdown]
+               [--row-order set|uuid]   (default set: new rows grouped by set, then collector number)
   coqc verify  <dataset.coqd> <input.jsonl|json>   lossless round-trip check
   coqc inspect <dataset.coqd>                      sizes, dictionaries, samples
   coqc diff    <old.coqd> <new.coqd>               blocks changed between releases
@@ -48,6 +49,11 @@ fn cmd_compile(args: &[String]) {
         rebase: args.iter().any(|a| a == "--rebase"),
         keep_prices: args.iter().any(|a| a == "--keep-prices"),
         progress: args.iter().any(|a| a == "--progress"),
+        row_order: match flag_value(args, "--row-order").as_deref() {
+            None | Some("set") => RowOrder::Set,
+            Some("uuid") => RowOrder::Uuid,
+            Some(o) => die(&format!("unknown --row-order {o} (use set or uuid)")),
+        },
         source_date: flag_value(args, "--source-date")
             .map_or(0, |s| s.parse().unwrap_or_else(|_| die("bad --source-date"))),
     };
@@ -107,14 +113,20 @@ fn cmd_compile(args: &[String]) {
         let b = coqc::breakdown(&ds).unwrap_or_else(|e| die(&e));
         let printing_stored = sections.iter().find(|s| s.name == "printing").map_or(1, |s| s.stored_bytes);
         let mut rows: Vec<_> = b.iter().collect();
-        rows.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+        rows.sort_by(|a, b| b.1.stored.cmp(&a.1.stored));
         println!("estimated stored size per residual key (printing section stored {}):", mb(printing_stored));
         let mut sum = 0u64;
-        for (k, (raw, comp)) in &rows {
-            sum += comp;
-            println!("    {k:<24} raw {:>10}  stored {:>10}  {:>5.1}% of printing section", mb(*raw), mb(*comp), 100.0 * *comp as f64 / printing_stored as f64);
+        for (k, st) in rows.iter().take(25) {
+            println!("    {k:<24} raw {:>10}  stored {:>10}  {:>5.1}%", mb(st.raw), mb(st.stored), 100.0 * st.stored as f64 / printing_stored as f64);
         }
-        println!("    {:<24} stored {:>10}  (typed fields, images, structure; estimate)", "(everything else)", mb(printing_stored.saturating_sub(sum)));
+        for (_, st) in &rows {
+            sum += st.stored;
+        }
+        println!("    (all {} residual keys: {}; everything else {} = typed fields, images, structure; estimates)", rows.len(), mb(sum), mb(printing_stored.saturating_sub(sum)));
+        println!("keys identical across all printings of an oracle card (could be stored once on the oracle record):");
+        for (k, st) in rows.iter().filter(|(_, s)| s.oracles_with > 0) {
+            println!("    {k:<24} {:>6} of {:>6} oracle cards identical", st.oracles_with - st.oracles_varied, st.oracles_with);
+        }
     }
     println!("epoch {}  file {}  sha256 {sha}", ds.meta.cards_epoch, mb(bytes.len() as u64));
     println!("time: compile {:.2?}, write {:.2?}", t_compile, t_write);

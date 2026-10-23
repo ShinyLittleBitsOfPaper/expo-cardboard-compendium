@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- 2026-10-23, 0.0.1-7: `--row-order set|uuid` (default `set`): NEW rows are assigned by (set, collector number) instead of uuid so each block holds similar data; existing rows never move, so this only matters at first compile or after `--rebase`. `--breakdown` now also reports, for the 12 costliest residual keys, how many oracle cards have identical values on every printing (candidates to store once on the oracle record). Tests: 15.
+
+### Added
 - 2026-10-22, 0.0.1-6: `coqc compile --progress` (stderr progress for both passes and the write) and `--breakdown` (estimated stored bytes per residual key). `scripts/package-bundle.sh` and `scripts/ingest-bundle.sh` (tested end to end in throwaway repos), expanded `.gitignore`, `.bundle-seq`. Real-data run: images 108,668 canonical / 0 raw, file 46.6 MB (was 52.0).
 
 ### Fixed

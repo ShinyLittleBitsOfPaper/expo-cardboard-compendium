@@ -17,6 +17,16 @@ printings, 85 attraction_lights, a few oddities). File 46.6 MB: printing 297 MB 
 oracle 12 MB -> 3.5 MB, uuid indexes 2.7 MB. Compile ~26 s + write ~16 s, verify ~10 s.
 Largest residual keys (raw): related_uris 63 MB, purchase_uris 49, all_parts 37, then `*_uri`.
 
+## Per-key stored cost (real data, `--breakdown`, printing section 40.4 MB stored)
+
+all_parts 6.2 MB (15%), related_uris 3.1, prints_search_uri 2.0, purchase_uris 2.0, illustration_id 1.9,
+rulings_uri 1.9, uri 1.8, scryfall_uri 1.6, artist_ids 1.6, set_uri 1.4, set_id 1.4; the rest of the
+residual keys are under 1 MB each; typed fields, images and structure about 11.2 MB. The large raw
+URLs (related_uris, purchase_uris) compress ~20-25x, so deriving them buys little. Derivable from other
+fields and worth ~7 MB together: `uri`, `rulings_uri` (card id), `prints_search_uri` (oracle id),
+`set_uri` (set_id). Set-level fields (`set_id`, `set_uri`, `set_search_uri`, ...) should compress far
+better when rows are grouped by set (0.0.1-7 default); compare `--row-order uuid` vs `set`.
+
 ## Findings
 
 1. **Residual JSON dominates the raw size, but zstd already removes most repetition.** Many URLs

@@ -160,6 +160,26 @@ fn legalities_are_kept_per_printing() {
 fn breakdown_reports_residual_keys() {
     let (ds, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
     let b = coqc::breakdown(&ds).unwrap();
-    let (raw, comp) = b["uri"];
-    assert!(raw > 0 && comp > 0);
+    assert!(b["uri"].raw > 0 && b["uri"].stored > 0);
+    // Bolt printings 1 and 15... share an oracle card; `uri` always differs per printing
+    assert!(b["uri"].oracles_with > 0);
+}
+
+#[test]
+fn new_rows_are_grouped_by_set_then_collector_number() {
+    let (ds, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
+    let keys: Vec<(String, u32)> = ds
+        .printings
+        .iter()
+        .map(|p| {
+            let cn = p.collector_number.clone().unwrap_or_default();
+            (p.set_code.clone().unwrap_or_default(), cn.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(u32::MAX))
+        })
+        .collect();
+    assert!(keys.windows(2).all(|w| w[0] <= w[1]), "{keys:?}");
+    // uuid order is available and gives different rows
+    let o = Options { row_order: coqc::RowOrder::Uuid, ..opts() };
+    let (u, _) = compile(&fx("sample_a.jsonl"), None, &o).unwrap();
+    assert_eq!(u.printings.len(), ds.printings.len());
+    assert!(u.printings.windows(2).all(|w| w[0].scryfall_id <= w[1].scryfall_id));
 }
