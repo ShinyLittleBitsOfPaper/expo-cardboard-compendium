@@ -36,6 +36,14 @@ better when rows are grouped by set (0.0.1-7 default); compare `--row-order uuid
   on every card daily. `coqc diff old new --keys` names the fields. Decision pending on that output:
   move volatile fields to their own section, and ship record-level patches.
 
+## Daily churn, resolved in 0.0.1-9
+
+`diff --keys` on real data (22 -> 23 Oct): oracle `edhrec_rank` changed on 28,932 of 35,736 cards and
+`penny_rank` on 16,337 (everything else on 1-7 rows); printings: only 317 existing rows changed
+(`purchase_uris` 192, `all_parts` 116, `cardmarket_id` 92, `mtgo_id` 84, image stamps 77) plus 31 new
+and 1 removed. Fix: ranks table + record-level patches. Synthetic check: 0.04 MB patch vs 1.88 MB
+block patch. Still to confirm on real data with `scripts/daily.sh` over consecutive days.
+
 ## Findings
 
 1. **Residual JSON dominates the raw size, but zstd already removes most repetition.** Many URLs

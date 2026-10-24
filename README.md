@@ -29,6 +29,15 @@ residual key contributes to the stored size (slower; recompresses per key).
 No network? `coqc synth 100000 data/synth.jsonl [--day N]` writes Scryfall-shaped fake data
 (~350 MB) for timing and churn experiments. Its numbers are indicative only.
 
+## Daily pipeline (and patches)
+
+```sh
+scripts/daily.sh                 # fetch -> compile on top of the latest release -> patch -> verify the patch
+```
+
+Keeps `data/daily/releases/cards-YYYYMMDD.coqd` and `patches/<old>-to-<new>.coqp`. By hand:
+`coqc patch old.coqd new.coqd -o p.coqp`, `coqc apply old.coqd p.coqp -o new.coqd` (verifies SHA-256).
+
 ## Layout
 
 - `crates/format`: `coqc-format` (records, container, card JSON reconstruction)

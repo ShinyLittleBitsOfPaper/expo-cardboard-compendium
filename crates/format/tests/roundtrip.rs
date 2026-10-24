@@ -84,6 +84,7 @@ fn container_roundtrip_and_determinism() {
     let ds = Dataset {
         meta: Meta { cards_epoch: 2, source_date: 20260701, ..Default::default() },
         oracle: (0..600u32).map(|i| OracleRecord { oracle_id: [(i % 251) as u8; 16], ..sample_oracle() }).collect(),
+        ranks: (0..600u32).map(|i| Ranks { edhrec: Some(i * 3), penny: (i % 2 == 0).then_some(i) }).collect(),
         printings: (0..600u32).map(|i| PrintingRecord { oracle_row: i, ..sample_printing() }).collect(),
     };
     let (a, _) = write(&ds).unwrap();
@@ -91,6 +92,7 @@ fn container_roundtrip_and_determinism() {
     assert_eq!(a, b, "same input must give identical bytes");
     let back = read(&a).unwrap();
     assert_eq!(back.oracle, ds.oracle);
+    assert_eq!(back.ranks, ds.ranks);
     assert_eq!(back.printings, ds.printings);
     assert_eq!(back.meta, ds.meta);
 }
@@ -98,8 +100,20 @@ fn container_roundtrip_and_determinism() {
 #[test]
 fn rejects_garbage_and_future_versions() {
     assert!(read(b"nope").is_err());
-    let ds = Dataset { meta: Meta::default(), oracle: vec![], printings: vec![] };
+    let ds = Dataset { meta: Meta::default(), oracle: vec![], ranks: vec![], printings: vec![] };
     let (mut bytes, _) = write(&ds).unwrap();
     bytes[6] = 9; // min_reader > supported
     assert!(read(&bytes).is_err());
+    bytes[6] = 2;
+    bytes[4] = 1; // a version-1 file lacks the ranks section
+    bytes[5] = 0;
+    assert!(read(&bytes).is_err());
+}
+
+#[test]
+fn slug_matches_scryfall_style() {
+    use coqc_format::json::slug;
+    assert_eq!(slug("Forest"), "forest");
+    assert_eq!(slug("Jinnie Fay, Jetmir's Second"), "jinnie-fay-jetmirs-second");
+    assert_eq!(slug("Fire // Ice"), "fire-ice");
 }

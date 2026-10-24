@@ -136,6 +136,34 @@ impl Meta {
     }
 }
 
+/// Volatile per-oracle numbers (they change for most cards every day), kept in a separate
+/// small section so the big oracle blocks stay byte-identical between releases.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Ranks {
+    pub edhrec: Option<u32>,
+    pub penny: Option<u32>,
+}
+
+pub fn encode_ranks(r: &[Ranks]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.u32(r.len() as u32);
+    for x in r {
+        w.opt_id(x.edhrec);
+        w.opt_id(x.penny);
+    }
+    w.buf
+}
+
+pub fn decode_ranks(b: &[u8]) -> Result<Vec<Ranks>> {
+    let mut r = Reader::new(b);
+    let n = r.u32()? as usize;
+    let mut v = Vec::with_capacity(n);
+    for _ in 0..n {
+        v.push(Ranks { edhrec: r.opt_id()?, penny: r.opt_id()? });
+    }
+    Ok(v)
+}
+
 // ---------------------------------------------------------------- oracle ---
 
 #[derive(Clone, Debug, PartialEq, Default)]

@@ -5,10 +5,11 @@
 //! represents each oracle id; pass 2 builds printing records and verifies that
 //! every card rebuilds to exactly its original JSON (see `heal`).
 
+pub mod patch;
 pub mod synth;
 
 use coqc_format::json::*;
-use coqc_format::{Dataset, Dict, Images, Meta, OracleFace, OracleRecord, PrintingFace, PrintingRecord};
+use coqc_format::{Dataset, Dict, Images, Meta, OracleFace, OracleRecord, PrintingFace, PrintingRecord, Ranks};
 use serde::de::{SeqAccess, Visitor};
 use serde::Deserializer as _;
 use serde_json::{Map, Value};
@@ -86,6 +87,8 @@ pub struct Stats {
     pub images_raw: u64,
     pub healed_printings: u64,
     pub healed_keys: BTreeMap<String, u64>,
+    /// Derivable URL keys (see `DERIVED_KEYS`): (not stored because derivable, stored because different).
+    pub derived: BTreeMap<String, (u64, u64)>,
     /// First card seen for each healed key, as "name [id]".
     pub healed_examples: BTreeMap<String, String>,
     /// Why image URLs failed the canonical check: normalized signature -> count.
@@ -233,6 +236,23 @@ fn take_bool(rest: &mut Obj, spill: &mut Obj, k: &str) -> Option<bool> {
     }
 }
 
+fn take_u32(rest: &mut Obj, spill: &mut Obj, k: &str) -> Option<u32> {
+    match rest.remove(k) {
+        Some(Value::Number(n)) => match n.as_u64().and_then(|v| u32::try_from(v).ok()) {
+            Some(v) => Some(v),
+            None => {
+                spill.insert(k.to_string(), Value::Number(n));
+                None
+            }
+        },
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            spill.insert(k.to_string(), v);
+            None
+        }
+    }
+}
+
 fn take_dict(rest: &mut Obj, spill: &mut Obj, k: &str, d: &Dict) -> Option<u32> {
     let s = take_str(rest, spill, k)?;
     match d.id(&s) {
@@ -297,7 +317,7 @@ fn legalities_of(rest: &mut Obj, spill: &mut Obj, formats: &Dict) -> Option<Vec<
     Some(out)
 }
 
-fn oracle_from_card(card: &Obj, oracle_id: Id) -> OracleRecord {
+fn oracle_from_card(card: &Obj, oracle_id: Id) -> (OracleRecord, Ranks) {
     let mut rest = card.clone();
     let mut spill = Obj::new();
     let name = take_str(&mut rest, &mut spill, "name");
@@ -310,6 +330,9 @@ fn oracle_from_card(card: &Obj, oracle_id: Id) -> OracleRecord {
         Some(Value::Number(n)) => n.as_f64(),
         _ => None,
     };
+    // volatile ranks live in their own table, not in the oracle blocks
+    let edhrec = take_u32(&mut rest, &mut spill, "edhrec_rank");
+    let penny = take_u32(&mut rest, &mut spill, "penny_rank");
     for k in ORACLE_EXTRA_KEYS {
         if let Some(v) = rest.remove(*k) {
             spill.insert(k.to_string(), v);
@@ -336,7 +359,7 @@ fn oracle_from_card(card: &Obj, oracle_id: Id) -> OracleRecord {
         ),
         _ => None, // absent or malformed: healing restores the original
     };
-    OracleRecord {
+    let rec = OracleRecord {
         tombstone: false,
         oracle_id,
         name,
@@ -348,7 +371,8 @@ fn oracle_from_card(card: &Obj, oracle_id: Id) -> OracleRecord {
         cmc,
         faces,
         extra: to_text(spill),
-    }
+    };
+    (rec, Ranks { edhrec, penny })
 }
 
 /// File extension of an image URL (`jpg`, `png`, `webp`, ...), ignoring the `?stamp`.
@@ -442,7 +466,14 @@ fn images_from(v: Option<Value>, side: &str, id: &Id, keys: &Dict, stats: &mut S
     }
 }
 
-fn printing_from_card(card: &Obj, id: Id, oracle_row: u32, meta: &Meta, stats: &mut Stats) -> PrintingRecord {
+fn printing_from_card(
+    card: &Obj,
+    id: Id,
+    oracle_row: u32,
+    o: &OracleRecord,
+    meta: &Meta,
+    stats: &mut Stats,
+) -> PrintingRecord {
     let mut rest = card.clone();
     let mut spill = Obj::new();
     for k in [
@@ -472,6 +503,17 @@ fn printing_from_card(card: &Obj, id: Id, oracle_row: u32, meta: &Meta, stats: &
     let set_code = take_str(&mut rest, &mut spill, "set");
     let set_name = take_str(&mut rest, &mut spill, "set_name");
     let collector_number = take_str(&mut rest, &mut spill, "collector_number");
+    for k in DERIVED_KEYS {
+        let want = derived_value(k, &id, &o.oracle_id, set_code.as_deref(), collector_number.as_deref(), o.name.as_deref());
+        match (rest.get(k), want) {
+            (Some(Value::String(have)), Some(want)) if *have == want => {
+                rest.remove(k);
+                stats.derived.entry(k.to_string()).or_default().0 += 1;
+            }
+            (Some(_), _) => stats.derived.entry(k.to_string()).or_default().1 += 1,
+            _ => {}
+        }
+    }
     let rarity = take_dict(&mut rest, &mut spill, "rarity", &meta.rarities);
     let border_color = take_dict(&mut rest, &mut spill, "border_color", &meta.border_colors);
     let promo = take_bool(&mut rest, &mut spill, "promo");
@@ -626,10 +668,10 @@ fn oracle_digest(card: &Obj) -> [u8; 8] {
     Sha256::digest(serde_json::to_string(&Value::Object(m)).unwrap().as_bytes())[..8].try_into().unwrap()
 }
 
-fn heal(meta: &Meta, o: &OracleRecord, p: &mut PrintingRecord, orig: &Obj, stats: &mut Stats) -> bool {
+fn heal(meta: &Meta, o: &OracleRecord, ranks: &Ranks, p: &mut PrintingRecord, orig: &Obj, stats: &mut Stats) -> bool {
     let mut orig = Value::Object(orig.clone());
     normalize(&mut orig);
-    let mut recon = card_json(meta, o, p);
+    let mut recon = card_json(meta, o, ranks, p);
     normalize(&mut recon);
     if recon == orig {
         return true;
@@ -659,7 +701,7 @@ fn heal(meta: &Meta, o: &OracleRecord, p: &mut PrintingRecord, orig: &Obj, stats
     }
     p.extra = to_text(extra);
     stats.healed_printings += 1;
-    let mut again = card_json(meta, o, p);
+    let mut again = card_json(meta, o, ranks, p);
     normalize(&mut again);
     again == orig
 }
@@ -795,13 +837,13 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
     stats.new_oracle = (oracle_rows.len() - prev_oracle.len()) as u64;
     stats.new_printings = (print_rows.len() - prev_print.len()) as u64;
 
-    let oracle: Vec<OracleRecord> = oracle_rows
+    let (oracle, ranks): (Vec<OracleRecord>, Vec<Ranks>) = oracle_rows
         .iter()
         .map(|id| match best.get(id) {
             Some(card) => oracle_from_card(card, *id),
-            None => OracleRecord::tombstone(*id),
+            None => (OracleRecord::tombstone(*id), Ranks::default()),
         })
-        .collect();
+        .unzip();
     stats.oracle_cards = live_oracle.len() as u64;
     stats.tombstoned_oracle = oracle_rows.len() as u64 - stats.oracle_cards;
     drop(best);
@@ -822,8 +864,8 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
             return; // duplicate id: first occurrence wins (counted in pass 1)
         }
         let orow = oracle_map[&a.oracle_id];
-        let mut p = printing_from_card(&card, a.id, orow, &meta, &mut local);
-        if !heal(&meta, &oracle[orow as usize], &mut p, &card, &mut local) {
+        let mut p = printing_from_card(&card, a.id, orow, &oracle[orow as usize], &meta, &mut local);
+        if !heal(&meta, &oracle[orow as usize], &ranks[orow as usize], &mut p, &card, &mut local) {
             unhealed += 1;
         }
         if let Some(e) = &p.extra {
@@ -849,6 +891,7 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
     stats.images_raw = local.images_raw;
     stats.healed_printings = local.healed_printings;
     stats.healed_keys = local.healed_keys;
+    stats.derived = local.derived;
     stats.healed_examples = local.healed_examples;
     stats.image_mismatches = local.image_mismatches;
     stats.extra_examples = local.extra_examples;
@@ -856,7 +899,7 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
     stats.printings = done.len() as u64;
     stats.tombstoned_printings = print_rows.len() as u64 - stats.printings;
 
-    Ok((Dataset { meta, oracle, printings }, stats))
+    Ok((Dataset { meta, oracle, ranks, printings }, stats))
 }
 
 /// Reconstructs every live card and compares it with `input` (after dropping
@@ -881,7 +924,7 @@ pub fn verify(ds: &Dataset, input: &Path) -> Result<(u64, u64), String> {
             if p.tombstone {
                 return false;
             }
-            let mut r = card_json(&ds.meta, &ds.oracle[p.oracle_row as usize], p);
+            let mut r = card_json(&ds.meta, &ds.oracle[p.oracle_row as usize], &ds.ranks[p.oracle_row as usize], p);
             normalize(&mut r);
             r == orig
         });
@@ -1064,9 +1107,12 @@ fn diff_rows<T>(old: &[T], new: &[T], tomb: impl Fn(&T) -> bool, flat: impl Fn(&
 }
 
 /// Compares two releases row by row (rows are stable across releases) and counts which keys changed.
-pub fn diff_keys(old: &Dataset, new: &Dataset) -> (KeyDiff, KeyDiff) {
+/// The third value is how many oracle rows changed in the separate ranks table.
+pub fn diff_keys(old: &Dataset, new: &Dataset) -> (KeyDiff, KeyDiff, u64) {
+    let ranks = old.ranks.iter().zip(&new.ranks).filter(|(a, b)| a != b).count() as u64;
     (
         diff_rows(&old.oracle, &new.oracle, |r| r.tombstone, flatten_oracle),
         diff_rows(&old.printings, &new.printings, |r| r.tombstone, flatten_printing),
+        ranks,
     )
 }

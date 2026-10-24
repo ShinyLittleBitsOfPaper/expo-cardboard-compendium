@@ -17,6 +17,8 @@ USAGE:
   coqc inspect <dataset.coqd>                      sizes, dictionaries, samples
   coqc diff    <old.coqd> <new.coqd> [--keys]      blocks changed between releases;
                                                    --keys: which fields changed, per row
+  coqc patch   <old.coqd> <new.coqd> -o <out.coqp>  record-level patch (same epoch)
+  coqc apply   <old.coqd> <patch.coqp> -o <out.coqd> apply it; verifies the result's SHA-256
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
 
@@ -82,6 +84,9 @@ fn cmd_compile(args: &[String]) {
     println!("oracle cards      : {} ({} new, {} tombstoned)", st.oracle_cards, st.new_oracle, st.tombstoned_oracle);
     println!("printings         : {} ({} new, {} tombstoned)", st.printings, st.new_printings, st.tombstoned_printings);
     println!("images            : {} canonical, {} raw", st.images_canonical, st.images_raw);
+    for (k, (hit, miss)) in &st.derived {
+        println!("derived key       : {k}: {hit} derived (not stored), {miss} stored because different");
+    }
     println!("healed printings  : {} (typed form differed; kept via extra)", st.healed_printings);
     let mut healed: Vec<_> = st.healed_keys.iter().collect();
     healed.sort_by(|a, b| b.1.cmp(a.1));
@@ -177,7 +182,7 @@ fn cmd_inspect(args: &[String]) {
         ds.printings.iter().filter(|r| r.tombstone).count()
     );
     if let Some(po) = ds.printings.iter().find(|r| !r.tombstone) {
-        let card = coqc_format::json::card_json(m, &ds.oracle[po.oracle_row as usize], po);
+        let card = coqc_format::json::card_json(m, &ds.oracle[po.oracle_row as usize], &ds.ranks[po.oracle_row as usize], po);
         println!("sample card (rebuilt):\n{}", serde_json::to_string_pretty(&card).unwrap());
     }
 }
@@ -213,7 +218,8 @@ fn cmd_diff(args: &[String]) {
     println!("naive block patch (uuid indexes rebuilt client-side): {}", mb(total_patch));
     if args.iter().any(|a| a == "--keys") {
         let (da, db) = (read(&a).unwrap(), read(&b).unwrap());
-        let (o, p) = coqc::diff_keys(&da, &db);
+        let (o, p, r) = coqc::diff_keys(&da, &db);
+        println!("oracle ranks table (edhrec/penny): {r} rows changed");
         for (name, d) in [("oracle", &o), ("printing", &p)] {
             println!(
                 "{name}: rows {} -> {} ({} appended), {} existing rows changed, {} newly tombstoned, {} revived",
@@ -226,6 +232,32 @@ fn cmd_diff(args: &[String]) {
             }
         }
     }
+}
+
+fn cmd_patch(args: &[String]) {
+    if args.len() < 2 {
+        die("usage: coqc patch <old.coqd> <new.coqd> -o <out.coqp>");
+    }
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <out.coqp>"));
+    let (a, b) = (std::fs::read(&args[0]).unwrap_or_else(|e| die(&e.to_string())), std::fs::read(&args[1]).unwrap_or_else(|e| die(&e.to_string())));
+    let (patch, i) = coqc::patch::make_patch(&a, &b).unwrap_or_else(|e| die(&e));
+    std::fs::write(&out, &patch).unwrap_or_else(|e| die(&e.to_string()));
+    println!(
+        "patch {}: {} (raw {}) vs full file {}\n  oracle rows: {} changed, {} appended; printing rows: {} changed, {} appended",
+        out, mb(i.patch_bytes), mb(i.raw_bytes), mb(b.len() as u64), i.oracle_changed, i.oracle_appended, i.printing_changed, i.printing_appended
+    );
+}
+
+fn cmd_apply(args: &[String]) {
+    if args.len() < 2 {
+        die("usage: coqc apply <old.coqd> <patch.coqp> -o <out.coqd>");
+    }
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <out.coqd>"));
+    let (a, p) = (std::fs::read(&args[0]).unwrap_or_else(|e| die(&e.to_string())), std::fs::read(&args[1]).unwrap_or_else(|e| die(&e.to_string())));
+    let t = Instant::now();
+    let new = coqc::patch::apply_patch(&a, &p).unwrap_or_else(|e| die(&e));
+    std::fs::write(&out, &new).unwrap_or_else(|e| die(&e.to_string()));
+    println!("applied: {} ({}), sha256 {} verified ({:.2?})", out, mb(new.len() as u64), sha_hex(&new), t.elapsed());
 }
 
 fn cmd_synth(args: &[String]) {
@@ -252,6 +284,8 @@ fn main() {
         "inspect" => cmd_inspect(rest),
         "diff" => cmd_diff(rest),
         "synth" => cmd_synth(rest),
+        "patch" => cmd_patch(rest),
+        "apply" => cmd_apply(rest),
         _ => {
             print!("{USAGE}");
             exit(1)

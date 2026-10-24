@@ -55,6 +55,20 @@ A.append(normal(13,O(12),"Colorless Rock","Tap: add one mana.",[],type_line="Art
 x=normal(14,O(13),"Weird One","Odd.",["G","W"],finishes=["glossy","nonfoil"],future_field={"a":[1,2,{"b":None}]},watermark=None)
 x["legalities"]=dict(LEG, newformat="legal")
 A.append(x)
+import re
+def slug(n):
+    n=n.lower().replace("'","").replace("\u2019","")
+    return re.sub(r"[^a-z0-9]+","-",n).strip("-")
+def fix(cards):
+    """Add the URL keys Scryfall derives from other fields, like real data has."""
+    for c in cards:
+        oid = c.get("oracle_id") or (c.get("card_faces") or [{}])[0].get("oracle_id", "00000000-0000-4000-8000-000000000000")
+        c["rulings_uri"]=f"https://api.scryfall.com/cards/{c['id']}/rulings"
+        c["prints_search_uri"]=f"https://api.scryfall.com/cards/search?order=released&q=oracleid%3A{oid}&unique=prints"
+        c["scryfall_uri"]=f"https://scryfall.com/card/{c['set']}/{c['collector_number']}/{slug(c['name'])}?utm_source=api"
+        if c["id"]==u(12):  # non-ASCII name: Scryfall's slug differs from ours, so this one must be stored
+            c["scryfall_uri"]="https://scryfall.com/card/m11/112/lim-dul-s-vault?utm_source=api"
+fix(A)
 with open("sample_a.jsonl","w") as f:
     for c in A: f.write(json.dumps(c,ensure_ascii=False)+"\n")
 B=[json.loads(json.dumps(c)) for c in A if c["id"]!=u(2)]
@@ -63,6 +77,7 @@ B.append(normal(16,O(14),"Brand New Card","New.",["B"]))
 for c in B:
     if c["id"]==u(11): c["oracle_text"]="Half mana, errata."
     if c["id"]==u(1): c["legalities"]=dict(LEG, pauper="legal")
+fix(B)
 with open("sample_b.jsonl","w") as f:
     for c in B: f.write(json.dumps(c,ensure_ascii=False)+"\n")
 json.dump(A, open("sample_a_array.json","w"), ensure_ascii=False)

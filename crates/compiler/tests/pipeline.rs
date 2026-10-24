@@ -17,7 +17,7 @@ fn row(ds: &Dataset, n: u32) -> usize {
 }
 fn card(ds: &Dataset, n: u32) -> serde_json::Value {
     let p = &ds.printings[row(ds, n)];
-    card_json(&ds.meta, &ds.oracle[p.oracle_row as usize], p)
+    card_json(&ds.meta, &ds.oracle[p.oracle_row as usize], &ds.ranks[p.oracle_row as usize], p)
 }
 
 #[test]
@@ -160,9 +160,9 @@ fn legalities_are_kept_per_printing() {
 fn breakdown_reports_residual_keys() {
     let (ds, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
     let b = coqc::breakdown(&ds).unwrap();
-    assert!(b["uri"].raw > 0 && b["uri"].stored > 0);
-    // Bolt printings 1 and 15... share an oracle card; `uri` always differs per printing
-    assert!(b["uri"].oracles_with > 0);
+    // `uri` is derived rather than stored, so check a key that is stored
+    assert!(b["purchase_uris"].raw > 0 && b["purchase_uris"].stored > 0);
+    assert!(!b.contains_key("uri"));
 }
 
 #[test]
@@ -188,10 +188,44 @@ fn new_rows_are_grouped_by_set_then_collector_number() {
 fn diff_keys_names_what_changed() {
     let (a, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
     let (b, _) = compile(&fx("sample_b.jsonl"), Some(&a), &opts()).unwrap();
-    let (o, p) = coqc::diff_keys(&a, &b);
+    let (o, p, r) = coqc::diff_keys(&a, &b);
+    assert_eq!(r, 1); // Bolt's representative printing changed, so its rank row changed
+    assert!(o.by_key.get("edhrec_rank").is_none(), "ranks are not in the oracle blocks");
     assert_eq!(o.by_key.get("oracle_text"), Some(&1)); // Little Girl errata
     assert_eq!(o.rows_new - o.rows_old, 1); // Brand New Card
     assert_eq!(p.became_tombstone, 1); // card 2 removed
     assert_eq!(p.rows_new - p.rows_old, 2);
     assert_eq!(p.by_key.get("legalities"), Some(&1)); // card 1 pauper legality
+}
+
+#[test]
+fn derived_urls_are_not_stored_but_come_back() {
+    let (ds, st) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
+    let (hit, _) = st.derived["uri"];
+    assert!(hit > 0);
+    let p = &ds.printings[row(&ds, 1)];
+    assert!(!p.extra.as_deref().unwrap_or("").contains("\"uri\""), "uri must not be stored");
+    assert_eq!(card(&ds, 1)["uri"], "https://api.scryfall.com/cards/00000000-0000-4000-8000-000000000001");
+    assert!(card(&ds, 1)["rulings_uri"].as_str().unwrap().ends_with("/rulings"));
+}
+
+#[test]
+fn patch_apply_reproduces_the_new_file_exactly() {
+    let (a, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
+    let (b, _) = compile(&fx("sample_b.jsonl"), Some(&a), &opts()).unwrap();
+    let (ab, bb) = (write(&a).unwrap().0, write(&b).unwrap().0);
+    let (patch, info) = coqc::patch::make_patch(&ab, &bb).unwrap();
+    assert_eq!(info.printing_appended, 2);
+    assert_eq!(info.oracle_appended, 1);
+    let out = coqc::patch::apply_patch(&ab, &patch).unwrap();
+    assert_eq!(out, bb);
+    // wrong base and tampered patches are rejected
+    assert!(coqc::patch::apply_patch(&bb, &patch).is_err());
+    let mut bad = patch.clone();
+    let n = bad.len();
+    bad[n - 3] ^= 0xff;
+    assert!(coqc::patch::apply_patch(&ab, &bad).is_err());
+    // a different epoch cannot be patched
+    let (c, _) = compile(&fx("sample_b.jsonl"), Some(&a), &Options { rebase: true, ..opts() }).unwrap();
+    assert!(coqc::patch::make_patch(&ab, &write(&c).unwrap().0).is_err());
 }

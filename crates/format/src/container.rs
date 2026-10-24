@@ -21,8 +21,8 @@ use crate::types::*;
 use sha2::{Digest, Sha256};
 
 pub const MAGIC: &[u8; 4] = b"COQD";
-pub const FORMAT_VERSION: u16 = 1;
-pub const MIN_READER: u16 = 1;
+pub const FORMAT_VERSION: u16 = 2;
+pub const MIN_READER: u16 = 2;
 pub const BLOCK_RECORDS: usize = 256;
 /// Pinned so identical input yields identical bytes (also pinned via Cargo.lock).
 pub const ZSTD_LEVEL: i32 = 15;
@@ -35,6 +35,7 @@ pub enum SectionId {
     Printing = 3,
     OracleUuids = 4,
     PrintingUuids = 5,
+    Ranks = 6,
 }
 
 impl SectionId {
@@ -45,6 +46,7 @@ impl SectionId {
             SectionId::Printing => "printing",
             SectionId::OracleUuids => "oracle_uuids",
             SectionId::PrintingUuids => "printing_uuids",
+            SectionId::Ranks => "oracle_ranks",
         }
     }
 }
@@ -53,6 +55,8 @@ impl SectionId {
 pub struct Dataset {
     pub meta: Meta,
     pub oracle: Vec<OracleRecord>,
+    /// One entry per oracle row (same length as `oracle`).
+    pub ranks: Vec<Ranks>,
     pub printings: Vec<PrintingRecord>,
 }
 
@@ -135,17 +139,23 @@ pub fn write(ds: &Dataset) -> Result<(Vec<u8>, Vec<SectionStat>)> {
     let ouuid = uuid_section(ds.oracle.iter().enumerate().map(|(i, r)| (r.oracle_id, i as u32)));
     let puuid = uuid_section(ds.printings.iter().enumerate().map(|(i, r)| (r.scryfall_id, i as u32)));
 
+    let ranks_raw = encode_ranks(&ds.ranks);
+    let mut ranks_sec = Writer::new();
+    ranks_sec.u32(ranks_raw.len() as u32);
+    ranks_sec.bytes(&zstd_compress(&ranks_raw)?);
+
     let sections: Vec<(SectionId, Vec<u8>)> = vec![
         (SectionId::Meta, meta.buf),
         (SectionId::Oracle, oracle),
         (SectionId::Printing, printing),
         (SectionId::OracleUuids, ouuid),
         (SectionId::PrintingUuids, puuid),
+        (SectionId::Ranks, ranks_sec.buf),
     ];
 
     let mut stats = vec![ostat, pstat];
     for (id, bytes) in &sections {
-        if matches!(id, SectionId::Meta | SectionId::OracleUuids | SectionId::PrintingUuids) {
+        if matches!(id, SectionId::Meta | SectionId::OracleUuids | SectionId::PrintingUuids | SectionId::Ranks) {
             stats.push(SectionStat {
                 name: id.name(),
                 raw_bytes: bytes.len() as u64,
@@ -201,7 +211,10 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed<'_>> {
     if r.take(4)? != MAGIC {
         return Err(Error::BadMagic);
     }
-    let _version = r.u16()?;
+    let version = r.u16()?;
+    if version < MIN_READER {
+        return Err(Error::Unsupported(version)); // older layouts lack required sections
+    }
     let min_reader = r.u16()?;
     if min_reader > FORMAT_VERSION {
         return Err(Error::Unsupported(min_reader));
@@ -280,5 +293,14 @@ pub fn read(bytes: &[u8]) -> Result<Dataset> {
     let oracle = decode_blocks(p.section(SectionId::Oracle)?, p.oracle_count as usize, OracleRecord::decode)?;
     let printings =
         decode_blocks(p.section(SectionId::Printing)?, p.printing_count as usize, PrintingRecord::decode)?;
-    Ok(Dataset { meta, oracle, printings })
+    let rsec = p.section(SectionId::Ranks)?;
+    let mut rr = Reader::new(rsec);
+    let rawlen = rr.u32()? as usize;
+    let comp = rr.take(rsec.len() - 4)?;
+    let raw = zstd::bulk::decompress(comp, rawlen).map_err(|e| Error::Zstd(e.to_string()))?;
+    let ranks = decode_ranks(&raw)?;
+    if ranks.len() != oracle.len() {
+        return Err(Error::Corrupt("ranks length mismatch"));
+    }
+    Ok(Dataset { meta, oracle, ranks, printings })
 }

@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- 2026-10-24, 0.0.1-9: format v2 + patches, from the real day-over-day diff (every oracle block changed
+  because `edhrec_rank`/`penny_rank` change on ~80%/45% of cards daily; only 317 printing rows changed).
+  Ranks moved to their own section (oracle blocks now stay identical between releases). `uri`,
+  `rulings_uri`, `prints_search_uri`, `scryfall_uri` are derived and stored only when different.
+  New `coqc patch` / `coqc apply` (record-level, SHA-256 verified; patch replays to a byte-identical
+  file) and `scripts/daily.sh`. `diff --keys` also reports the ranks table. Fixtures now carry the
+  derived URL keys. v1 files must be recompiled. Tests: 19.
+
+### Added
 - 2026-10-23, 0.0.1-8: `coqc diff <old> <new> --keys` reports, per key, how many existing rows changed between releases (oracle and printing separately). `--breakdown` variation stats now only count oracle cards with 2+ printings (single-printing cards were trivially "identical"). Tests: 16. Real data so far: `--row-order set` cut the file from 46.6 to 33.6 MB; day1 -> day2 (31 new printings, 1 removed) still changed 100% of oracle blocks and 22% of printing blocks (10.7 MB block patch).
 
 ### Added

@@ -38,6 +38,54 @@ pub const FINISH_NAMES: [&str; 3] = ["nonfoil", "foil", "etched"];
 pub const COLOR_LETTERS: [&str; 5] = ["W", "U", "B", "R", "G"];
 pub const LEGALITY_NAMES: [&str; 5] = ["", "legal", "not_legal", "restricted", "banned"];
 
+/// Keys whose value Scryfall derives from other fields; the compiler stores them only when
+/// the real value differs from what `derived_value` produces.
+pub const DERIVED_KEYS: [&str; 4] = ["uri", "rulings_uri", "prints_search_uri", "scryfall_uri"];
+
+/// Scryfall-style URL slug: lowercase ASCII letters/digits, apostrophes dropped, other runs -> `-`.
+pub fn slug(name: &str) -> String {
+    let mut out = String::new();
+    let mut dash = false;
+    for c in name.chars() {
+        if c == '\'' || c == '\u{2019}' {
+            continue;
+        }
+        if c.is_ascii_alphanumeric() {
+            if dash && !out.is_empty() {
+                out.push('-');
+            }
+            dash = false;
+            out.push(c.to_ascii_lowercase());
+        } else {
+            dash = true;
+        }
+    }
+    out
+}
+
+pub fn derived_value(
+    key: &str,
+    id: &[u8; 16],
+    oracle_id: &[u8; 16],
+    set: Option<&str>,
+    collector_number: Option<&str>,
+    name: Option<&str>,
+) -> Option<String> {
+    let id = uuid_to_string(id);
+    Some(match key {
+        "uri" => format!("https://api.scryfall.com/cards/{id}"),
+        "rulings_uri" => format!("https://api.scryfall.com/cards/{id}/rulings"),
+        "prints_search_uri" => format!(
+            "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A{}&unique=prints",
+            uuid_to_string(oracle_id)
+        ),
+        "scryfall_uri" => {
+            format!("https://scryfall.com/card/{}/{}/{}?utm_source=api", set?, collector_number?, slug(name?))
+        }
+        _ => return None,
+    })
+}
+
 pub fn uuid_to_string(u: &[u8; 16]) -> String {
     let h: String = u.iter().map(|b| format!("{b:02x}")).collect();
     format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
@@ -116,7 +164,7 @@ fn put_str(m: &mut Map<String, Value>, k: &str, v: &Option<String>) {
 }
 
 /// Rebuild the card object. `null` values are never emitted (absent == null).
-pub fn card_json(meta: &Meta, o: &OracleRecord, p: &PrintingRecord) -> Value {
+pub fn card_json(meta: &Meta, o: &OracleRecord, ranks: &Ranks, p: &PrintingRecord) -> Value {
     let mut m = Map::new();
     m.insert("id".into(), Value::from(uuid_to_string(&p.scryfall_id)));
     m.insert("oracle_id".into(), Value::from(uuid_to_string(&o.oracle_id)));
@@ -136,6 +184,12 @@ pub fn card_json(meta: &Meta, o: &OracleRecord, p: &PrintingRecord) -> Value {
         }
     }
     merge_extra(&mut m, &o.extra);
+    if let Some(v) = ranks.edhrec {
+        m.insert("edhrec_rank".into(), Value::from(v));
+    }
+    if let Some(v) = ranks.penny {
+        m.insert("penny_rank".into(), Value::from(v));
+    }
 
     if let Some(i) = p.layout {
         if let Some(s) = meta.layouts.get(i) {
@@ -196,6 +250,12 @@ pub fn card_json(meta: &Meta, o: &OracleRecord, p: &PrintingRecord) -> Value {
     put_str(&mut m, "artist", &p.artist);
     if let Some(v) = images_to_json(meta, &p.images, "front", &p.scryfall_id) {
         m.insert("image_uris".into(), v);
+    }
+    for k in DERIVED_KEYS {
+        let d = derived_value(k, &p.scryfall_id, &o.oracle_id, p.set_code.as_deref(), p.collector_number.as_deref(), o.name.as_deref());
+        if let Some(v) = d {
+            m.insert(k.to_string(), Value::from(v));
+        }
     }
 
     if let Some(ofs) = &o.faces {

@@ -1,4 +1,4 @@
-# COQD format, version 1
+# COQD format, version 2
 
 Little-endian. Strings are `varint length + UTF-8`. Optional values use `0 = absent`.
 
@@ -10,7 +10,8 @@ u32 oracle_count | u32 printing_count | u32 section_count
 section_count x { u32 id, u64 offset, u64 len }        (absolute offsets)
 ```
 
-Sections: 1 meta, 2 oracle blocks, 3 printing blocks, 4 oracle uuid index, 5 printing uuid index.
+Sections: 1 meta, 2 oracle blocks, 3 printing blocks, 4 oracle uuid index, 5 printing uuid index,
+6 oracle ranks. Version 1 files (no ranks section) are rejected.
 Readers reject `min_reader` above what they support.
 
 ## Blocks
@@ -23,6 +24,18 @@ Readers reject `min_reader` above what they support.
 
 `u32 count`, then `{[u8;16] uuid, u32 row}` sorted by uuid. Includes tombstones, so ids are never
 reused. Derivable from the records; a patch format need not ship it.
+
+## Ranks (section 6)
+
+`u32 raw_len` + one zstd blob of `u32 count` then, per oracle row, `opt(edhrec_rank)` and
+`opt(penny_rank)` (varint, 0 = absent, else value+1). EDHREC and penny ranks change for most cards every
+day, so they live apart from the oracle blocks, which then stay identical between releases.
+
+## Derived keys
+
+`uri`, `rulings_uri`, `prints_search_uri`, `scryfall_uri` are rebuilt from id, oracle id, set,
+collector number and name (`json::derived_value`) and stored in `extra` only when the real value
+differs. A card that lacks one of them is listed under `__absent`.
 
 ## Meta
 
@@ -56,3 +69,16 @@ Rebuild order: oracle typed, oracle extra, printing typed, faces, printing extra
 
 Row ids and dictionary ids are append-only. Output must not depend on input order or wall-clock
 time. Pinned: zstd version (Cargo.lock) and level.
+
+## Patches (`.coqp`)
+
+`"COQP" | u16 version (1) | u32 raw_len | zstd(body)`, body =
+`sha256(base file) | sha256(target file) | u32 oracle_rows | u32 printing_rows |
+varint len + target meta | varint len + target ranks table |
+oracle changes | printing changes`, each change list = `varint count` then
+`{u32 row, varint len, record bytes}` for every row that is new or whose encoded record changed.
+
+`apply` checks the base hash, replaces/appends those rows, swaps in meta and ranks, rewrites the file
+with the deterministic writer and requires the result to hash to the target. A mismatch (for example a
+different zstd build) means: download the full file. Patches only exist within one epoch and only
+for growing row counts; the UUID indexes are rebuilt, not shipped.
