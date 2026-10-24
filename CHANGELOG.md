@@ -3,7 +3,8 @@
 ## Unreleased
 
 ### Added
-- 2026-10-24, 0.0.1-14: search aligned with slbop searchParser. New leaves `typeeq`, `oracleeq` (per-face exact), `colorcount`, `identitycount`; name ignores `'`/`’`/`,`; identity `:` is now subset; rarity ranks special=rare, bonus>mythic. Test `slbop_parity_leaves`. Tests: 26. Parser port to Rust and `tag:`/set-scoped leaf still open.
+- 2026-10-24, 0.0.1-15: search follows Scryfall conventions (slbop-isms dropped). Reverted name punctuation stripping and `typeeq`/`oracleeq` (not Scryfall); rarity order is now common<uncommon<rare<special<mythic<bonus; added `nameexact` (`!"name"`). Kept identity `:` = subset, `colorcount`/`identitycount`. Docs: standalone-module scope + parser TODO. Tests: 26. Supersedes -14's slbop-parity notes.
+- 2026-10-24, 0.0.1-14: (superseded by -15) added slbop-parity leaves.
 
 ### Added
 - 2026-10-24, 0.0.1-13: price dataset. COQR table (TCGplayer USD + Cardmarket EUR retail x normal/foil/etched, keyed by printing row, cents+1), COQX zigzag deltas with SHA-256 replay, COQM uuid map from AllIdentifiers. CLI `idmap`, `prices`, `prices-patch`, `prices-apply`, `price`; `scripts/daily-prices.sh`; docs/prices.md. Tests: 25. Not yet run on real MTGJSON data.

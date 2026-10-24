@@ -20,8 +20,8 @@ CLI: `coqc search <file> <query> [--plan JSON] [--cards] [--limit N] [--offset N
 - Colors/identity: WUBRG mask. Typed value, else `extra` (non-canonical order lives there), else (colors)
   union of face colors, else colorless. Scryfall semantics: `:` and `>=` include; `=` exact; `<=` subset
   (colorless matches); `<`/`>` strict; `!=`.
-- **Identity `:` = subset** (`id:wu` == `id<=wu`, colorless fits); `color` `:` stays superset (slbop/Scryfall). Parser expands named combos (`azorius`, `bant`...) to letters.
-- Mana value is `f64` (half mana works): `mv=0.5`. Rarity rank (slbop parity): `common<uncommon<rare=special<mythic<bonus`.
+- **Identity `:` = subset** (`id:wu` == `id<=wu`, colorless fits); `color` `:` stays superset (Scryfall). Parser expands named combos (`azorius`, `bant`...) to letters.
+- Mana value is `f64` (half mana works): `mv=0.5`. Rarity rank (Scryfall's list order): `common<uncommon<rare<special<mythic<bonus`.
 - Sort: default released desc, name, row. Fields: released, name, mv, rarity (each asc/desc). `unique:
   cards` keeps the first printing of each oracle card in sort order. `offset`/`limit` page the sorted rows.
   (Full sort of every match is ~30 ms for 100k hits on a laptop; use partial selection if the engine needs it.)
@@ -32,7 +32,7 @@ CLI: `coqc search <file> <query> [--plan JSON] [--cards] [--limit N] [--offset N
   {"not":{"type":"land"}}]},
  "sort":[{"field":"released","desc":true},{"field":"name"}],"unique":"cards","offset":0,"limit":60}
 ```
-Leaves: `name` (ignores `'`/`’`/`,` on both sides, slbop parity), `oracle`, `type` (substring), `typeeq`/`oracleeq` (exact match of any one face), `color`/`identity` `{op,colors}` (letters `wubrg`, empty/`c` =
+Leaves: `name`, `oracle`, `type` (substring), `nameexact` (`!"name"`: full name or one face), `color`/`identity` `{op,colors}` (letters `wubrg`, empty/`c` =
 colorless), `mv` `{op,value}`, `colorcount`/`identitycount` `{op,value}` (`c>=2`, `id=3`), `rarity` `{op,value}`, `set` (code), `cn` (collector number, exact).
 Ops: `: = != < <= > >=`. Combinators: `and`, `or`, `not`. `expr` omitted = all printings.
 
@@ -41,8 +41,12 @@ Ops: `: = != < <= > >=`. Combinators: `and`, `or`, `not`. `expr` omitted = all p
 (`registerSet`), cursors. Real-data sizes/timings: run `coqc index-stats` on the real file (synthetic text
 is not representative).
 
-## slbop parity notes (searchParser.ts)
-Parser (tokeniser, `-` negation → `not`, `set#number` → set+cn with leading zeros dropped, unknown `kw:` → bare name,
-named color combos, quoted phrases) should move into Rust next (`parse(&str) -> Query`), ported with slbop's tests; the
-plan JSON stays as the debug/IR form. `tag:` is user data: needs a scoped-set leaf (`registerSet` handle, app-side tags).
-`cn` is case-insensitive exact. slbop's SQL fallbacks (cmc/colors from mana cost) are unnecessary: records carry cmc/colors.
+## Scope
+Goal: mirror Scryfall's search syntax (https://scryfall.com/docs/syntax) in a standalone engine; where any app's
+conventions differ, Scryfall wins. App-specific features (tags, collection state) are the host app's: it resolves
+them to ids and passes a scoped set (`registerSet`). Parser moves into Rust (`parse(&str) -> Query`) taking the
+raw Scryfall query string; plan JSON stays as IR/debug form.
+Parser TODO: named color sets (guilds, shards, colleges, wedges, four-color), `c:m`/`multicolor` (= count>=2),
+`colorless`, `-` negation, `or`/parentheses, quoted phrases, `!"exact"`, `~` in oracle text, `fo:`, `m:`/`mana:`,
+`mv:even|odd`, `cn` ranges, `e:`/`b:`/`in:`/`st:`, `is:`/`has:`, `include:extras` (funny/vanguard/memorabilia hidden
+by default), `unique:`/`order:`/`direction:`/`prefer:`. Unverified: whether Scryfall ignores `'`/`,` in names.

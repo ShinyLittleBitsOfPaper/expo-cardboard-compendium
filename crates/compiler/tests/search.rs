@@ -81,21 +81,22 @@ fn stop_grams_fall_back_to_scan() {
 }
 
 #[test]
-fn slbop_parity_leaves() {
+fn scryfall_semantics_leaves() {
     let (ds, ix) = setup();
     let run = |j: &str| -> Vec<String> {
         let q: Query = serde_json::from_str(&format!("{{\"expr\":{j},\"unique\":\"cards\"}}")).unwrap();
         ix.search(&q).rows.iter().map(|&p| ds.oracle[ds.printings[p as usize].oracle_row as usize].name.clone().unwrap()).collect()
     };
-    // name ignores apostrophes/commas on both sides
-    assert_eq!(run(r#"{"name":"lim-duls vault"}"#), vec!["Lim-Dûl's Vault"]);
-    assert_eq!(run(r#"{"name":"lim-dul's, vault"}"#), vec!["Lim-Dûl's Vault"]);
-    // id: bare `:` is subset; colorless fits anywhere
+    // id: bare `:` is subset (id<=); colorless fits anywhere
     assert!(run(r#"{"identity":{"op":":","colors":"ur"}}"#).contains(&"Colorless Rock".to_string()));
     assert!(!run(r#"{"identity":{"op":":","colors":"u"}}"#).contains(&"Lim-Dûl's Vault".to_string()));
     // color counts
     assert!(run(r#"{"colorcount":{"op":">=","value":2}}"#).contains(&"Fire // Ice".to_string()));
     assert_eq!(run(r#"{"identitycount":{"op":"=","value":0}}"#).iter().filter(|n| *n == "Colorless Rock").count(), 1);
-    // per-face exact
-    assert_eq!(run(r#"{"typeeq":"zzz"}"#).len(), 0);
+    // !"name": full name or one face, folded
+    assert_eq!(run(r#"{"nameexact":"lightning bolt"}"#), vec!["Lightning Bolt"]);
+    assert_eq!(run(r#"{"nameexact":"fire"}"#), vec!["Fire // Ice"]);
+    assert_eq!(run(r#"{"nameexact":"bolt"}"#).len(), 0);
+    // rarity order: ... rare < special < mythic < bonus
+    assert!(run(r#"{"rarity":{"op":">","value":"rare"}}"#).len() >= run(r#"{"rarity":{"op":">=","value":"mythic"}}"#).len());
 }

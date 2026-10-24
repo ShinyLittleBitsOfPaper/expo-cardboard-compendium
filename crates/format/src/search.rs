@@ -64,10 +64,8 @@ pub enum Expr {
     Oracle(String),
     /// substring of type line (all faces)
     Type(String),
-    /// type line equals this text exactly (any one face)
-    TypeEq(String),
-    /// oracle text equals this text exactly (any one face)
-    OracleEq(String),
+    /// `!"name"`: whole card name equals (case/accent-folded) either the full name or one face
+    NameExact(String),
     /// number of colors / identity colors compared with `value` (`c>=2`, `id=3`)
     ColorCount(MvCmp),
     IdentityCount(MvCmp),
@@ -152,11 +150,6 @@ fn fold_char(c: char, out: &mut String) {
             x => out.push(x),
         }
     }
-}
-
-/// Name key: `fold` plus apostrophes/commas removed (slbop parity: "wizards staff" finds "Wizard's Staff").
-pub fn fold_name(s: &str) -> String {
-    fold(s).chars().filter(|c| *c != '\'' && *c != ',').collect()
 }
 
 /// Lowercase + strip common Latin accents; the same function is applied to text and needles.
@@ -489,9 +482,10 @@ fn rarity_rank(s: &str) -> Option<u8> {
     match s {
         "common" => Some(0),
         "uncommon" => Some(1),
-        "rare" | "special" => Some(2),
-        "mythic" => Some(3),
-        "bonus" => Some(4),
+        "rare" => Some(2),
+        "special" => Some(3),
+        "mythic" => Some(4),
+        "bonus" => Some(5),
         _ => None,
     }
 }
@@ -525,7 +519,7 @@ impl SearchIndex {
         for o in &ds.oracle {
             s.o_live.push(!o.tombstone);
             let name = o.name.clone().unwrap_or_default();
-            s.names.push(&fold_name(&name));
+            s.names.push(&fold(&name));
             s.types.push(&fold(&join_faces(&o.type_line, &o.faces, |f| &f.type_line)));
             // `~`-free; text of all faces. Reminder text is kept: Scryfall's o: matches it too.
             s.texts.push(&fold(&join_faces(&o.oracle_text, &o.faces, |f| &f.oracle_text)));
@@ -611,19 +605,18 @@ impl SearchIndex {
                 b.not_within(&self.live_p);
                 b
             }
-            Expr::Name(q) => self.expand(&self.name_tri.find(&self.names, &|i| self.o_live[i], &fold_name(q))),
+            Expr::Name(q) => self.expand(&self.name_tri.find(&self.names, &|i| self.o_live[i], &fold(q))),
             Expr::Oracle(q) => self.expand(&self.text_tri.find(&self.texts, &|i| self.o_live[i], &fold(q))),
             Expr::Type(q) => {
                 let q = fold(q);
                 self.oracle_pred(|i| self.types.get(i).contains(&q))
             }
-            Expr::TypeEq(q) => {
+            Expr::NameExact(q) => {
                 let q = fold(q);
-                self.oracle_pred(|i| self.types.get(i).split('\n').flat_map(|l| l.split(" // ")).any(|f| f == q))
-            }
-            Expr::OracleEq(q) => {
-                let q = fold(q);
-                self.oracle_pred(|i| self.texts.get(i).split('\n').any(|f| f == q))
+                self.oracle_pred(|i| {
+                    let n = self.names.get(i);
+                    n == q || n.split(" // ").any(|f| f == q)
+                })
             }
             Expr::ColorCount(m) => self.oracle_pred(|i| num_cmp(self.o_colors[i].count_ones() as f64, m.value, m.op)),
             Expr::IdentityCount(m) => self.oracle_pred(|i| num_cmp(self.o_identity[i].count_ones() as f64, m.value, m.op)),
@@ -633,7 +626,7 @@ impl SearchIndex {
             }
             Expr::Identity(c) => {
                 let q = mask_of(&c.colors);
-                // Scryfall: bare `:` on identity = subset (fits in a deck of these colors)
+                // Scryfall: bare `:` on identity = subset (`id<=`)
                 let op = if c.op == Op::Colon { Op::Le } else { c.op };
                 self.oracle_pred(|i| mask_cmp(self.o_identity[i], q, op))
             }
