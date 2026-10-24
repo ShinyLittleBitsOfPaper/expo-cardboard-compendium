@@ -79,3 +79,23 @@ fn stop_grams_fall_back_to_scan() {
         assert_eq!(ix.search(&query).rows, scan.search(&query).rows, "{q}");
     }
 }
+
+#[test]
+fn slbop_parity_leaves() {
+    let (ds, ix) = setup();
+    let run = |j: &str| -> Vec<String> {
+        let q: Query = serde_json::from_str(&format!("{{\"expr\":{j},\"unique\":\"cards\"}}")).unwrap();
+        ix.search(&q).rows.iter().map(|&p| ds.oracle[ds.printings[p as usize].oracle_row as usize].name.clone().unwrap()).collect()
+    };
+    // name ignores apostrophes/commas on both sides
+    assert_eq!(run(r#"{"name":"lim-duls vault"}"#), vec!["Lim-Dûl's Vault"]);
+    assert_eq!(run(r#"{"name":"lim-dul's, vault"}"#), vec!["Lim-Dûl's Vault"]);
+    // id: bare `:` is subset; colorless fits anywhere
+    assert!(run(r#"{"identity":{"op":":","colors":"ur"}}"#).contains(&"Colorless Rock".to_string()));
+    assert!(!run(r#"{"identity":{"op":":","colors":"u"}}"#).contains(&"Lim-Dûl's Vault".to_string()));
+    // color counts
+    assert!(run(r#"{"colorcount":{"op":">=","value":2}}"#).contains(&"Fire // Ice".to_string()));
+    assert_eq!(run(r#"{"identitycount":{"op":"=","value":0}}"#).iter().filter(|n| *n == "Colorless Rock").count(), 1);
+    // per-face exact
+    assert_eq!(run(r#"{"typeeq":"zzz"}"#).len(), 0);
+}

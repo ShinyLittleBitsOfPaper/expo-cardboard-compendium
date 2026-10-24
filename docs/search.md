@@ -20,8 +20,8 @@ CLI: `coqc search <file> <query> [--plan JSON] [--cards] [--limit N] [--offset N
 - Colors/identity: WUBRG mask. Typed value, else `extra` (non-canonical order lives there), else (colors)
   union of face colors, else colorless. Scryfall semantics: `:` and `>=` include; `=` exact; `<=` subset
   (colorless matches); `<`/`>` strict; `!=`.
-- Mana value is `f64` (half mana works): `mv=0.5`. Rarity compares `common<uncommon<rare<mythic`;
-  `special`/`bonus` only match by equality.
+- **Identity `:` = subset** (`id:wu` == `id<=wu`, colorless fits); `color` `:` stays superset (slbop/Scryfall). Parser expands named combos (`azorius`, `bant`...) to letters.
+- Mana value is `f64` (half mana works): `mv=0.5`. Rarity rank (slbop parity): `common<uncommon<rare=special<mythic<bonus`.
 - Sort: default released desc, name, row. Fields: released, name, mv, rarity (each asc/desc). `unique:
   cards` keeps the first printing of each oracle card in sort order. `offset`/`limit` page the sorted rows.
   (Full sort of every match is ~30 ms for 100k hits on a laptop; use partial selection if the engine needs it.)
@@ -32,11 +32,17 @@ CLI: `coqc search <file> <query> [--plan JSON] [--cards] [--limit N] [--offset N
   {"not":{"type":"land"}}]},
  "sort":[{"field":"released","desc":true},{"field":"name"}],"unique":"cards","offset":0,"limit":60}
 ```
-Leaves: `name`, `oracle`, `type` (substring), `color`/`identity` `{op,colors}` (letters `wubrg`, empty/`c` =
-colorless), `mv` `{op,value}`, `rarity` `{op,value}`, `set` (code), `cn` (collector number, exact).
+Leaves: `name` (ignores `'`/`’`/`,` on both sides, slbop parity), `oracle`, `type` (substring), `typeeq`/`oracleeq` (exact match of any one face), `color`/`identity` `{op,colors}` (letters `wubrg`, empty/`c` =
+colorless), `mv` `{op,value}`, `colorcount`/`identitycount` `{op,value}` (`c>=2`, `id=3`), `rarity` `{op,value}`, `set` (code), `cn` (collector number, exact).
 Ops: `: = != < <= > >=`. Combinators: `and`, `or`, `not`. `expr` omitted = all printings.
 
 ## Not done yet
 `cn` ranges, `lang`, `finish`, legality (`f:`), `is:`/`o:~`, regex, price predicates, set-scoped queries
 (`registerSet`), cursors. Real-data sizes/timings: run `coqc index-stats` on the real file (synthetic text
 is not representative).
+
+## slbop parity notes (searchParser.ts)
+Parser (tokeniser, `-` negation → `not`, `set#number` → set+cn with leading zeros dropped, unknown `kw:` → bare name,
+named color combos, quoted phrases) should move into Rust next (`parse(&str) -> Query`), ported with slbop's tests; the
+plan JSON stays as the debug/IR form. `tag:` is user data: needs a scoped-set leaf (`registerSet` handle, app-side tags).
+`cn` is case-insensitive exact. slbop's SQL fallbacks (cmc/colors from mana cost) are unnecessary: records carry cmc/colors.
