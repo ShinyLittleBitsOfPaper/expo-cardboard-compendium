@@ -896,7 +896,7 @@ pub fn verify(ds: &Dataset, input: &Path) -> Result<(u64, u64), String> {
 pub struct KeyStat {
     pub raw: u64,
     pub stored: u64,
-    /// Oracle cards having this key on at least one printing (top keys only).
+    /// Oracle cards with 2+ printings having this key on one (top keys only).
     pub oracles_with: u64,
     /// ...of which the value is NOT identical across all their printings.
     pub oracles_varied: u64,
@@ -947,8 +947,13 @@ pub fn breakdown(ds: &Dataset) -> Result<BTreeMap<String, KeyStat>, String> {
     let mut top: Vec<(String, u64)> = total.iter().map(|(k, v)| (k.clone(), v.stored)).collect();
     top.sort_by(|a, b| b.1.cmp(&a.1));
     let top: Vec<String> = top.into_iter().take(12).map(|(k, _)| k).collect();
-    let mut seen: HashMap<(u32, u8), (u64, bool)> = HashMap::new();
+    // Only oracle cards with 2+ live printings: a single printing is trivially "identical".
+    let mut per_oracle: HashMap<u32, u32> = HashMap::new();
     for p in ds.printings.iter().filter(|p| !p.tombstone) {
+        *per_oracle.entry(p.oracle_row).or_default() += 1;
+    }
+    let mut seen: HashMap<(u32, u8), (u64, bool)> = HashMap::new();
+    for p in ds.printings.iter().filter(|p| !p.tombstone && per_oracle[&p.oracle_row] >= 2) {
         let Some(m) = parse(p) else { continue };
         for (ki, k) in top.iter().enumerate() {
             if let Some(v) = m.get(k) {
@@ -969,4 +974,99 @@ pub fn breakdown(ds: &Dataset) -> Result<BTreeMap<String, KeyStat>, String> {
         t.oracles_varied += *varied as u64;
     }
     Ok(total)
+}
+
+/// What changed between two releases, per key (typed field names and residual keys alike).
+#[derive(Clone, Debug, Default)]
+pub struct KeyDiff {
+    pub rows_old: u64,
+    pub rows_new: u64,
+    pub rows_changed: u64,
+    pub became_tombstone: u64,
+    pub revived: u64,
+    pub by_key: BTreeMap<String, u64>,
+}
+
+fn add_extra(m: &mut BTreeMap<String, String>, extra: &Option<String>) {
+    if let Some(Ok(Value::Object(o))) = extra.as_deref().map(serde_json::from_str::<Value>) {
+        for (k, v) in o {
+            m.insert(k, v.to_string());
+        }
+    }
+}
+
+fn flatten_oracle(o: &OracleRecord) -> BTreeMap<String, String> {
+    let mut m = BTreeMap::new();
+    for (k, v) in [
+        ("name", format!("{:?}", o.name)),
+        ("mana_cost", format!("{:?}", o.mana_cost)),
+        ("type_line", format!("{:?}", o.type_line)),
+        ("oracle_text", format!("{:?}", o.oracle_text)),
+        ("colors", format!("{:?}", o.colors)),
+        ("color_identity", format!("{:?}", o.color_identity)),
+        ("cmc", format!("{:?}", o.cmc)),
+        ("card_faces", format!("{:?}", o.faces)),
+    ] {
+        m.insert(k.to_string(), v);
+    }
+    add_extra(&mut m, &o.extra);
+    m
+}
+
+fn flatten_printing(p: &PrintingRecord) -> BTreeMap<String, String> {
+    let mut m = BTreeMap::new();
+    for (k, v) in [
+        ("(oracle_row)", format!("{:?}", p.oracle_row)),
+        ("layout", format!("{:?}", p.layout)),
+        ("lang", format!("{:?}", p.lang)),
+        ("released_at", format!("{:?}", p.released_at)),
+        ("set", format!("{:?}", p.set_code)),
+        ("set_name", format!("{:?}", p.set_name)),
+        ("collector_number", format!("{:?}", p.collector_number)),
+        ("rarity", format!("{:?}", p.rarity)),
+        ("border_color", format!("{:?}", p.border_color)),
+        ("promo/reprint/digital", format!("{:?}", (p.promo, p.reprint, p.digital))),
+        ("finishes", format!("{:?}", p.finishes)),
+        ("promo_types", format!("{:?}", p.promo_types)),
+        ("legalities", format!("{:?}", p.legalities)),
+        ("flavor_text", format!("{:?}", p.flavor_text)),
+        ("artist", format!("{:?}", p.artist)),
+        ("(images: urls/stamps)", format!("{:?}", p.images)),
+        ("(card_faces: printing part)", format!("{:?}", p.faces)),
+    ] {
+        m.insert(k.to_string(), v);
+    }
+    add_extra(&mut m, &p.extra);
+    m
+}
+
+fn diff_rows<T>(old: &[T], new: &[T], tomb: impl Fn(&T) -> bool, flat: impl Fn(&T) -> BTreeMap<String, String>) -> KeyDiff {
+    let mut d = KeyDiff { rows_old: old.len() as u64, rows_new: new.len() as u64, ..Default::default() };
+    for (a, b) in old.iter().zip(new) {
+        match (tomb(a), tomb(b)) {
+            (false, true) => d.became_tombstone += 1,
+            (true, false) => d.revived += 1,
+            (true, true) => {}
+            (false, false) => {
+                let (fa, fb) = (flat(a), flat(b));
+                let mut changed = false;
+                for k in fa.keys().chain(fb.keys()).collect::<BTreeSet<_>>() {
+                    if fa.get(k) != fb.get(k) {
+                        *d.by_key.entry(k.clone()).or_default() += 1;
+                        changed = true;
+                    }
+                }
+                d.rows_changed += changed as u64;
+            }
+        }
+    }
+    d
+}
+
+/// Compares two releases row by row (rows are stable across releases) and counts which keys changed.
+pub fn diff_keys(old: &Dataset, new: &Dataset) -> (KeyDiff, KeyDiff) {
+    (
+        diff_rows(&old.oracle, &new.oracle, |r| r.tombstone, flatten_oracle),
+        diff_rows(&old.printings, &new.printings, |r| r.tombstone, flatten_printing),
+    )
 }

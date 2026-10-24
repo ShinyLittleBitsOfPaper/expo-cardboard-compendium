@@ -183,3 +183,15 @@ fn new_rows_are_grouped_by_set_then_collector_number() {
     assert_eq!(u.printings.len(), ds.printings.len());
     assert!(u.printings.windows(2).all(|w| w[0].scryfall_id <= w[1].scryfall_id));
 }
+
+#[test]
+fn diff_keys_names_what_changed() {
+    let (a, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
+    let (b, _) = compile(&fx("sample_b.jsonl"), Some(&a), &opts()).unwrap();
+    let (o, p) = coqc::diff_keys(&a, &b);
+    assert_eq!(o.by_key.get("oracle_text"), Some(&1)); // Little Girl errata
+    assert_eq!(o.rows_new - o.rows_old, 1); // Brand New Card
+    assert_eq!(p.became_tombstone, 1); // card 2 removed
+    assert_eq!(p.rows_new - p.rows_old, 2);
+    assert_eq!(p.by_key.get("legalities"), Some(&1)); // card 1 pauper legality
+}

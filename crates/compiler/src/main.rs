@@ -15,7 +15,8 @@ USAGE:
                [--row-order set|uuid]   (default set: new rows grouped by set, then collector number)
   coqc verify  <dataset.coqd> <input.jsonl|json>   lossless round-trip check
   coqc inspect <dataset.coqd>                      sizes, dictionaries, samples
-  coqc diff    <old.coqd> <new.coqd>               blocks changed between releases
+  coqc diff    <old.coqd> <new.coqd> [--keys]      blocks changed between releases;
+                                                   --keys: which fields changed, per row
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
 
@@ -123,9 +124,9 @@ fn cmd_compile(args: &[String]) {
             sum += st.stored;
         }
         println!("    (all {} residual keys: {}; everything else {} = typed fields, images, structure; estimates)", rows.len(), mb(sum), mb(printing_stored.saturating_sub(sum)));
-        println!("keys identical across all printings of an oracle card (could be stored once on the oracle record):");
+        println!("keys identical across all printings, among oracle cards with 2+ printings having the key (could be stored once on the oracle record):");
         for (k, st) in rows.iter().filter(|(_, s)| s.oracles_with > 0) {
-            println!("    {k:<24} {:>6} of {:>6} oracle cards identical", st.oracles_with - st.oracles_varied, st.oracles_with);
+            println!("    {k:<24} {:>6} of {:>6} identical", st.oracles_with - st.oracles_varied, st.oracles_with);
         }
     }
     println!("epoch {}  file {}  sha256 {sha}", ds.meta.cards_epoch, mb(bytes.len() as u64));
@@ -210,6 +211,21 @@ fn cmd_diff(args: &[String]) {
         total_patch += bytes;
     }
     println!("naive block patch (uuid indexes rebuilt client-side): {}", mb(total_patch));
+    if args.iter().any(|a| a == "--keys") {
+        let (da, db) = (read(&a).unwrap(), read(&b).unwrap());
+        let (o, p) = coqc::diff_keys(&da, &db);
+        for (name, d) in [("oracle", &o), ("printing", &p)] {
+            println!(
+                "{name}: rows {} -> {} ({} appended), {} existing rows changed, {} newly tombstoned, {} revived",
+                d.rows_old, d.rows_new, d.rows_new - d.rows_old, d.rows_changed, d.became_tombstone, d.revived
+            );
+            let mut keys: Vec<_> = d.by_key.iter().collect();
+            keys.sort_by(|a, b| b.1.cmp(a.1));
+            for (k, n) in keys.iter().take(20) {
+                println!("    {k:<30} changed on {n} rows");
+            }
+        }
+    }
 }
 
 fn cmd_synth(args: &[String]) {

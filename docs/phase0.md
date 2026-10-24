@@ -27,6 +27,15 @@ fields and worth ~7 MB together: `uri`, `rulings_uri` (card id), `prints_search_
 `set_uri` (set_id). Set-level fields (`set_id`, `set_uri`, `set_search_uri`, ...) should compress far
 better when rows are grouped by set (0.0.1-7 default); compare `--row-order uuid` vs `set`.
 
+## Row order and real daily churn (2026-10-22 -> 2026-10-23)
+
+- `--row-order set` (new rows by set, then collector number) vs uuid: 33.6 MB vs 46.6 MB.
+- Day 1 -> day 2: 119,155 -> 119,185 lines; 31 new printings, 14 new oracle cards, 1 tombstone.
+  Block diff: oracle 140/140 blocks changed (3.47 MB), printing 92/419 (7.25 MB), naive patch
+  10.72 MB of 33.6 MB. A handful of real changes dirties most blocks, so something volatile changes
+  on every card daily. `coqc diff old new --keys` names the fields. Decision pending on that output:
+  move volatile fields to their own section, and ship record-level patches.
+
 ## Findings
 
 1. **Residual JSON dominates the raw size, but zstd already removes most repetition.** Many URLs

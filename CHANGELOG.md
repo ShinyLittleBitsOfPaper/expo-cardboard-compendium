@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- 2026-10-23, 0.0.1-8: `coqc diff <old> <new> --keys` reports, per key, how many existing rows changed between releases (oracle and printing separately). `--breakdown` variation stats now only count oracle cards with 2+ printings (single-printing cards were trivially "identical"). Tests: 16. Real data so far: `--row-order set` cut the file from 46.6 to 33.6 MB; day1 -> day2 (31 new printings, 1 removed) still changed 100% of oracle blocks and 22% of printing blocks (10.7 MB block patch).
+
+### Added
 - 2026-10-23, 0.0.1-7: `--row-order set|uuid` (default `set`): NEW rows are assigned by (set, collector number) instead of uuid so each block holds similar data; existing rows never move, so this only matters at first compile or after `--rebase`. `--breakdown` now also reports, for the 12 costliest residual keys, how many oracle cards have identical values on every printing (candidates to store once on the oracle record). Tests: 15.
 
 ### Added
