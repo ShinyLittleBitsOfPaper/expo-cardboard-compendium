@@ -6,6 +6,7 @@
 //! every card rebuilds to exactly its original JSON (see `heal`).
 
 pub mod patch;
+pub mod prices;
 pub mod quick;
 pub mod synth;
 

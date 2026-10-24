@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- 2026-10-24, 0.0.1-13: price dataset. COQR table (TCGplayer USD + Cardmarket EUR retail x normal/foil/etched, keyed by printing row, cents+1), COQX zigzag deltas with SHA-256 replay, COQM uuid map from AllIdentifiers. CLI `idmap`, `prices`, `prices-patch`, `prices-apply`, `price`; `scripts/daily-prices.sh`; docs/prices.md. Tests: 25. Not yet run on real MTGJSON data.
+
+### Added
 - 2026-10-24, 0.0.1-12: search. `coqc_format::search`: derived (not stored) index + query plan (`Expr` and/or/not; name, oracle, type, color, identity, mv, rarity, set, cn), folded text, trigram postings with stop-gram size gate and verify, scan fallback, bitset evaluation, sort/unique/paging. CLI `coqc search`, `coqc index-stats`; quick test parser (`coqc::quick`). docs/search.md. Tests: 23 (4 new, incl. gated-index equivalence). Synthetic 107k printings: index build 0.3 s; real-data numbers pending.
 
 ### Fixed

@@ -22,6 +22,10 @@ USAGE:
   coqc search  <dataset.coqd> <query words...> [--plan '<json Query>'] [--cards] [--limit N] [--offset N]
                                                    run a query (quick syntax: t:instant c>=r mv<=2 -o:flying \"bolt\")
   coqc index-stats <dataset.coqd>                  derived search index: build time, sizes, stop-grams
+  coqc idmap   <AllIdentifiers.json> -o <idmap.coqm>   MTGJSON uuid -> Scryfall id map (refresh rarely)
+  coqc prices  <AllPricesToday.json> --cards <cards.coqd> --idmap <idmap.coqm> -o <prices.coqr>
+  coqc prices-patch <old.coqr> <new.coqr> -o <p.coqx>  /  coqc prices-apply <old.coqr> <p.coqx> -o <new.coqr>
+  coqc price   <prices.coqr> <cards.coqd> <card name>  show stored prices of every printing of a card
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
 
@@ -340,6 +344,77 @@ fn cmd_search(args: &[String]) {
     }
 }
 
+fn rd(p: &str) -> Vec<u8> {
+    std::fs::read(p).unwrap_or_else(|e| die(&format!("{p}: {e}")))
+}
+
+fn cmd_idmap(args: &[String]) {
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <idmap.coqm>"));
+    let (b, n) = coqc::prices::build_idmap(&rd(args.first().unwrap_or_else(|| die("missing input")))).unwrap_or_else(|e| die(&e));
+    std::fs::write(&out, &b).unwrap_or_else(|e| die(&e.to_string()));
+    println!("idmap {out}: {n} uuids, {}", mb(b.len() as u64));
+}
+
+fn cmd_prices(args: &[String]) {
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <prices.coqr>"));
+    let cards = flag_value(args, "--cards").unwrap_or_else(|| die("missing --cards"));
+    let idm = flag_value(args, "--idmap").unwrap_or_else(|| die("missing --idmap"));
+    let t0 = Instant::now();
+    let (_, ds) = load(Path::new(&cards));
+    let idmap = coqc::prices::load_idmap(&rd(&idm)).unwrap_or_else(|e| die(&e.to_string()));
+    let (t, r) = coqc::prices::compile_prices(&ds, &idmap, &rd(args.first().unwrap_or_else(|| die("missing input")))).unwrap_or_else(|e| die(&e));
+    let b = t.encode().unwrap_or_else(|e| die(&e.to_string()));
+    std::fs::write(&out, &b).unwrap_or_else(|e| die(&e.to_string()));
+    println!("date {}  entries {}  unmapped uuids {}  not in cards file {}  conflicts {}", r.date, r.entries, r.unmapped, r.not_in_cards, r.conflicts);
+    println!("rows priced {} of {}", r.rows_priced, t.rows());
+    for (n, c) in coqc_format::prices::COLUMNS.iter().zip(r.per_column) {
+        println!("  {n:<11} {c}");
+    }
+    println!("prices {out}: {} ({:.1}s)", mb(b.len() as u64), t0.elapsed().as_secs_f64());
+}
+
+fn cmd_prices_patch(args: &[String]) {
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <p.coqx>"));
+    if args.len() < 2 {
+        die("usage: coqc prices-patch <old.coqr> <new.coqr> -o <p.coqx>");
+    }
+    let (a, b) = (rd(&args[0]), rd(&args[1]));
+    let p = coqc_format::prices::make_delta(&a, &b).unwrap_or_else(|e| die(&e.to_string()));
+    std::fs::write(&out, &p).unwrap_or_else(|e| die(&e.to_string()));
+    println!("price delta {out}: {} vs full file {}", mb(p.len() as u64), mb(b.len() as u64));
+}
+
+fn cmd_prices_apply(args: &[String]) {
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <new.coqr>"));
+    if args.len() < 2 {
+        die("usage: coqc prices-apply <old.coqr> <p.coqx> -o <new.coqr>");
+    }
+    let n = coqc_format::prices::apply_delta(&rd(&args[0]), &rd(&args[1])).unwrap_or_else(|e| die(&e.to_string()));
+    std::fs::write(&out, &n).unwrap_or_else(|e| die(&e.to_string()));
+    println!("applied: {out} ({}), hash verified", mb(n.len() as u64));
+}
+
+fn cmd_price(args: &[String]) {
+    if args.len() < 3 {
+        die("usage: coqc price <prices.coqr> <cards.coqd> <card name>");
+    }
+    let t = coqc_format::prices::PriceTable::decode(&rd(&args[0])).unwrap_or_else(|e| die(&e.to_string()));
+    let (_, ds) = load(Path::new(&args[1]));
+    let want = args[2..].join(" ").to_lowercase();
+    println!("prices dated {}", t.date);
+    for (i, p) in ds.printings.iter().enumerate() {
+        if p.tombstone || ds.oracle[p.oracle_row as usize].name.as_deref().map(str::to_lowercase).as_deref() != Some(&want) {
+            continue;
+        }
+        let f = |c: usize, sym: &str| t.cents(i, c).map_or("-".to_string(), |v| format!("{sym}{}.{:02}", v / 100, v % 100));
+        println!(
+            "  row {i:>6} {:<6} {:<5} tcg {} / {} / {}   cm {} / {} / {}",
+            p.set_code.as_deref().unwrap_or("-"), p.collector_number.as_deref().unwrap_or("-"),
+            f(0, "$"), f(1, "$"), f(2, "$"), f(3, "€"), f(4, "€"), f(5, "€")
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = args.first() else {
@@ -353,6 +428,11 @@ fn main() {
         "inspect" => cmd_inspect(rest),
         "diff" => cmd_diff(rest),
         "synth" => cmd_synth(rest),
+        "idmap" => cmd_idmap(rest),
+        "prices" => cmd_prices(rest),
+        "prices-patch" => cmd_prices_patch(rest),
+        "prices-apply" => cmd_prices_apply(rest),
+        "price" => cmd_price(rest),
         "search" => cmd_search(rest),
         "index-stats" => cmd_index_stats(rest),
         "patch" => cmd_patch(rest),
