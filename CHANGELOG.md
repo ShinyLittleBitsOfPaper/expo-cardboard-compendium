@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- 2026-10-24, 0.0.1-10: `scripts/daily.sh` printed only the last 4 lines of each compile, hiding the derived-URL and healed counts; it now prints a summary of counts, derived keys, healed printings and section sizes. First real v2 run: 27.3 MB file (was 33.6), compile 27 s + write 10 s.
+
 ### Added
 - 2026-10-24, 0.0.1-9: format v2 + patches, from the real day-over-day diff (every oracle block changed
   because `edhrec_rank`/`penny_rank` change on ~80%/45% of cards daily; only 317 printing rows changed).

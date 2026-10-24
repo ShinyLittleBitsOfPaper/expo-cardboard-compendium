@@ -6,6 +6,8 @@
 # Layout: <workdir>/raw/default-cards.jsonl, <workdir>/releases/cards-YYYYMMDD.coqd,
 #         <workdir>/patches/<prev>-to-<new>.coqp
 # Run it once a day. The first run makes the first release; later runs build on the latest one.
+# Prints a summary of each compile (counts, derived URLs, healed printings, sizes); run `coqc compile`
+# directly for the full report.
 # Env: COQC_STAMP=YYYYMMDD overrides the date label (testing), plus the fetch script's variables.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -18,6 +20,7 @@ for a in "$@"; do
   esac
 done
 BIN=./target/release/coqc
+SUMMARY='^(skipped|oracle cards|printings|images|derived key|healed printings|epoch|time:)|^    (oracle|printing|oracle_ranks|meta) '
 [ -x "$BIN" ] || { echo "build first: cargo build --release" >&2; exit 1; }
 mkdir -p "$WORK/raw" "$WORK/releases" "$WORK/patches"
 
@@ -30,7 +33,7 @@ if [ -f "$NEW" ]; then echo "$NEW already exists (nothing new since $STAMP)"; ex
 PREV="$(ls -1 "$WORK"/releases/cards-*.coqd 2>/dev/null | sort | tail -1 || true)"
 if [ -n "$PREV" ]; then
   echo "== compiling $STAMP on top of $(basename "$PREV")"
-  "$BIN" compile "$RAW" -o "$NEW" --prev "$PREV" --source-date "$STAMP" --progress | tail -4
+  "$BIN" compile "$RAW" -o "$NEW" --prev "$PREV" --source-date "$STAMP" --progress | grep -E "$SUMMARY"
   PSTAMP="$(basename "$PREV" .coqd)"; PSTAMP="${PSTAMP#cards-}"
   PATCH="$WORK/patches/$PSTAMP-to-$STAMP.coqp"
   "$BIN" patch "$PREV" "$NEW" -o "$PATCH"
@@ -39,6 +42,6 @@ if [ -n "$PREV" ]; then
   cmp "$TMP" "$NEW" && echo "patch verified: applying it to $(basename "$PREV") reproduces $(basename "$NEW") exactly"
 else
   echo "== first release: compiling $STAMP"
-  "$BIN" compile "$RAW" -o "$NEW" --source-date "$STAMP" --progress | tail -4
+  "$BIN" compile "$RAW" -o "$NEW" --source-date "$STAMP" --progress | grep -E "$SUMMARY"
 fi
 echo "release: $NEW ($(du -h "$NEW" | cut -f1))"
