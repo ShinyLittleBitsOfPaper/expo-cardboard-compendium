@@ -19,6 +19,9 @@ USAGE:
                                                    --keys: which fields changed, per row
   coqc patch   <old.coqd> <new.coqd> -o <out.coqp>  record-level patch (same epoch)
   coqc apply   <old.coqd> <patch.coqp> -o <out.coqd> apply it; verifies the result's SHA-256
+  coqc search  <dataset.coqd> <query words...> [--plan '<json Query>'] [--cards] [--limit N] [--offset N]
+                                                   run a query (quick syntax: t:instant c>=r mv<=2 -o:flying \"bolt\")
+  coqc index-stats <dataset.coqd>                  derived search index: build time, sizes, stop-grams
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
 
@@ -271,6 +274,72 @@ fn cmd_synth(args: &[String]) {
     println!("wrote {w} synthetic cards ({}) to {}", mb(size), args[1]);
 }
 
+fn cmd_index_stats(args: &[String]) {
+    use coqc_format::search::SearchIndex;
+    let path = args.first().unwrap_or_else(|| die("missing dataset"));
+    let (_, ds) = load(Path::new(path));
+    let t = Instant::now();
+    let ix = SearchIndex::build(&ds);
+    let ms = t.elapsed().as_millis();
+    let s = ix.stats();
+    println!("index build: {ms} ms (single thread, this machine)");
+    println!("oracle rows {}", s.oracle_rows);
+    println!("names : text {}  grams {}  stop {}  index ~{}", mb(s.name_bytes as u64), s.name_grams, s.name_stop, mb(s.name_index_bytes as u64));
+    println!("text  : text {}  grams {}  stop {}  index ~{}", mb(s.text_bytes as u64), s.text_grams, s.text_stop, mb(s.text_index_bytes as u64));
+    for q in ["bolt", "t:creature", "o:flying", "o:\"draw a card\"", "o:\"enters the battlefield\"", "o:ab", "c>=rg mv<=2", "o:destroy t:artifact"] {
+        let expr = coqc::quick::parse(q).unwrap_or_else(|e| die(&e));
+        let query = coqc_format::search::Query { expr, ..Default::default() };
+        let t = Instant::now();
+        let r = ix.search(&query);
+        println!("  {q:<32} {:>7} prints  {:>6.1} ms", r.total, t.elapsed().as_secs_f64() * 1000.0);
+    }
+}
+
+fn cmd_search(args: &[String]) {
+    use coqc_format::search::{Query, SearchIndex, Unique};
+    let path = args.first().unwrap_or_else(|| die("missing dataset"));
+    let (_, ds) = load(Path::new(path));
+    let mut query: Query = match flag_value(args, "--plan") {
+        Some(j) => serde_json::from_str(&j).unwrap_or_else(|e| die(&format!("bad --plan: {e}"))),
+        None => {
+            let mut words = Vec::new();
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--cards" => {}
+                    "--limit" | "--offset" | "--plan" => i += 1,
+                    w => words.push(w.to_string()),
+                }
+                i += 1;
+            }
+            Query { expr: coqc::quick::parse(&words.join(" ")).unwrap_or_else(|e| die(&e)), ..Default::default() }
+        }
+    };
+    if args.iter().any(|a| a == "--cards") {
+        query.unique = Unique::Cards;
+    }
+    query.limit = Some(flag_value(args, "--limit").map_or(20, |v| v.parse().unwrap_or_else(|_| die("bad --limit"))));
+    query.offset = flag_value(args, "--offset").map_or(0, |v| v.parse().unwrap_or_else(|_| die("bad --offset")));
+    let t = Instant::now();
+    let ix = SearchIndex::build(&ds);
+    let built = t.elapsed();
+    let t = Instant::now();
+    let r = ix.search(&query);
+    let took = t.elapsed();
+    println!("{} matches (index {} ms, query {:.2} ms)", r.total, built.as_millis(), took.as_secs_f64() * 1000.0);
+    for row in r.rows {
+        let p = &ds.printings[row as usize];
+        println!(
+            "  {:>6}  {} {:<5} {:<5} {}",
+            row,
+            p.released_at.map_or("-".into(), |d| coqc_format::json::released_to_string(d)),
+            p.set_code.as_deref().unwrap_or("-"),
+            p.collector_number.as_deref().unwrap_or("-"),
+            ds.oracle[p.oracle_row as usize].name.as_deref().unwrap_or("?")
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = args.first() else {
@@ -284,6 +353,8 @@ fn main() {
         "inspect" => cmd_inspect(rest),
         "diff" => cmd_diff(rest),
         "synth" => cmd_synth(rest),
+        "search" => cmd_search(rest),
+        "index-stats" => cmd_index_stats(rest),
         "patch" => cmd_patch(rest),
         "apply" => cmd_apply(rest),
         _ => {

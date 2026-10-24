@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- 2026-10-24, 0.0.1-12: search. `coqc_format::search`: derived (not stored) index + query plan (`Expr` and/or/not; name, oracle, type, color, identity, mv, rarity, set, cn), folded text, trigram postings with stop-gram size gate and verify, scan fallback, bitset evaluation, sort/unique/paging. CLI `coqc search`, `coqc index-stats`; quick test parser (`coqc::quick`). docs/search.md. Tests: 23 (4 new, incl. gated-index equivalence). Synthetic 107k printings: index build 0.3 s; real-data numbers pending.
+
 ### Fixed
 - 2026-10-24, 0.0.1-11: `daily.sh` labelled releases by date only, so the 21:05 bulk collided with the 09:05 one ("already exists"). Labels are now bulk `updated_at` as YYYYMMDDHHMM (source_date stays YYYYMMDD); `fetch-bulk.sh` records `<out>.updated_at` and skips download only when it is unchanged (was: file <24h old). Old `cards-20261024.coqd` stays valid as the prev release.
 

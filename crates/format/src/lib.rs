@@ -2,6 +2,7 @@
 pub mod codec;
 pub mod container;
 pub mod json;
+pub mod search;
 pub mod types;
 
 pub use codec::{Error, Result};

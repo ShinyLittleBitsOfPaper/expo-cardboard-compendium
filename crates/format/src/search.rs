@@ -1,0 +1,742 @@
+//! Search over a [`Dataset`]: derived in-memory index + query plan evaluation.
+//!
+//! The index is NOT stored in the file or in patches: it is rebuilt deterministically from the records
+//! (see docs/search.md). All text is folded (lowercase, accents stripped) before indexing and matching.
+//! Text predicates use a byte-trigram postings index (stop-grams dropped by a size gate), then verify
+//! the candidates against the folded text; needles under 3 bytes, or made only of stop-grams, scan.
+//! Everything is evaluated as bitsets over printing rows.
+
+use crate::container::Dataset;
+use crate::types::OracleRecord;
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+
+// ------------------------------------------------------------------ plan ---
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Op {
+    /// `:` (colors/identity: contains; mv/rarity: equals)
+    #[serde(rename = ":")]
+    Colon,
+    #[serde(rename = "=")]
+    Eq,
+    #[serde(rename = "!=")]
+    Ne,
+    #[serde(rename = "<")]
+    Lt,
+    #[serde(rename = "<=")]
+    Le,
+    #[serde(rename = ">")]
+    Gt,
+    #[serde(rename = ">=")]
+    Ge,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ColorCmp {
+    pub op: Op,
+    /// Letters from `wubrg` (any case); empty or `c` = colorless.
+    pub colors: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MvCmp {
+    pub op: Op,
+    pub value: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RarityCmp {
+    pub op: Op,
+    pub value: String,
+}
+
+/// Boolean tree of predicates, JSON-friendly: `{"and":[{"name":"bolt"},{"not":{"type":"land"}}]}`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Expr {
+    And(Vec<Expr>),
+    Or(Vec<Expr>),
+    Not(Box<Expr>),
+    /// substring of the card name (all faces)
+    Name(String),
+    /// substring of oracle text (all faces)
+    Oracle(String),
+    /// substring of type line (all faces)
+    Type(String),
+    Color(ColorCmp),
+    Identity(ColorCmp),
+    Mv(MvCmp),
+    Rarity(RarityCmp),
+    /// set code, exact
+    Set(String),
+    /// collector number, exact
+    Cn(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortField {
+    Released,
+    Name,
+    Mv,
+    Rarity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SortKey {
+    pub field: SortField,
+    #[serde(default)]
+    pub desc: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Unique {
+    /// every printing
+    #[default]
+    Prints,
+    /// first printing (in sort order) of each oracle card
+    Cards,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Query {
+    /// None = every live printing
+    #[serde(default)]
+    pub expr: Option<Expr>,
+    /// empty = default order (released desc, name)
+    #[serde(default)]
+    pub sort: Vec<SortKey>,
+    #[serde(default)]
+    pub unique: Unique,
+    #[serde(default)]
+    pub offset: usize,
+    /// None = no limit
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SearchResult {
+    /// matches before offset/limit
+    pub total: usize,
+    pub rows: Vec<u32>,
+}
+
+// ----------------------------------------------------------------- folding ---
+
+fn fold_char(c: char, out: &mut String) {
+    for l in c.to_lowercase() {
+        match l {
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' | 'ā' => out.push('a'),
+            'é' | 'è' | 'ê' | 'ë' | 'ē' => out.push('e'),
+            'í' | 'ì' | 'î' | 'ï' | 'ī' => out.push('i'),
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' | 'ō' => out.push('o'),
+            'ú' | 'ù' | 'û' | 'ü' | 'ū' => out.push('u'),
+            'ñ' => out.push('n'),
+            'ç' => out.push('c'),
+            'ý' | 'ÿ' => out.push('y'),
+            'æ' => out.push_str("ae"),
+            'œ' => out.push_str("oe"),
+            'ß' => out.push_str("ss"),
+            '’' | '‘' => out.push('\''),
+            '—' | '–' => out.push('-'),
+            x => out.push(x),
+        }
+    }
+}
+
+/// Lowercase + strip common Latin accents; the same function is applied to text and needles.
+pub fn fold(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for c in s.chars() {
+        fold_char(c, &mut o);
+    }
+    o
+}
+
+// ----------------------------------------------------------------- bitsets ---
+
+#[derive(Clone, Debug)]
+struct Bits {
+    w: Vec<u64>,
+}
+
+impl Bits {
+    fn new(n: usize) -> Self {
+        Self { w: vec![0; n.div_ceil(64)] }
+    }
+    fn set(&mut self, i: usize) {
+        self.w[i >> 6] |= 1 << (i & 63);
+    }
+    fn get(&self, i: usize) -> bool {
+        self.w[i >> 6] >> (i & 63) & 1 == 1
+    }
+    fn and(&mut self, o: &Bits) {
+        self.w.iter_mut().zip(&o.w).for_each(|(a, b)| *a &= *b);
+    }
+    fn or(&mut self, o: &Bits) {
+        self.w.iter_mut().zip(&o.w).for_each(|(a, b)| *a |= *b);
+    }
+    fn not_within(&mut self, universe: &Bits) {
+        self.w.iter_mut().zip(&universe.w).for_each(|(a, u)| *a = !*a & *u);
+    }
+    fn ones(&self) -> impl Iterator<Item = usize> + '_ {
+        self.w.iter().enumerate().flat_map(|(wi, &word)| {
+            let mut x = word;
+            std::iter::from_fn(move || {
+                if x == 0 {
+                    None
+                } else {
+                    let t = x.trailing_zeros() as usize;
+                    x &= x - 1;
+                    Some(wi * 64 + t)
+                }
+            })
+        })
+    }
+}
+
+// ----------------------------------------------------------------- trigrams ---
+
+/// Text kept in one arena; `off[i]..off[i+1]` is row i.
+#[derive(Default)]
+struct Arena {
+    text: String,
+    off: Vec<u32>,
+}
+
+impl Arena {
+    fn push(&mut self, s: &str) {
+        self.text.push_str(s);
+        self.off.push(self.text.len() as u32);
+    }
+    fn get(&self, i: usize) -> &str {
+        let a = if i == 0 { 0 } else { self.off[i - 1] } as usize;
+        &self.text[a..self.off[i] as usize]
+    }
+    fn len(&self) -> usize {
+        self.off.len()
+    }
+}
+
+#[derive(Default)]
+struct Trigrams {
+    /// sorted gram keys; `start[i]..start[i+1]` is the postings range in `post`
+    keys: Vec<u32>,
+    start: Vec<u32>,
+    /// delta-varint row ids
+    post: Vec<u8>,
+    /// grams present in more than `stop_df` rows: not stored, never used to narrow
+    stop: Vec<u32>,
+}
+
+fn gram(b: &[u8]) -> u32 {
+    (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32
+}
+
+fn put_varint(out: &mut Vec<u8>, mut v: u32) {
+    while v >= 0x80 {
+        out.push(v as u8 & 0x7f | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
+}
+
+impl Trigrams {
+    fn build(arena: &Arena, live: impl Fn(usize) -> bool, stop_fraction: f64, stop_min: usize) -> Self {
+        let n = arena.len();
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let mut row: Vec<u32> = Vec::new();
+        for i in 0..n {
+            if !live(i) {
+                continue;
+            }
+            row.clear();
+            row.extend(arena.get(i).as_bytes().windows(3).map(gram));
+            row.sort_unstable();
+            row.dedup();
+            pairs.extend(row.iter().map(|g| (*g, i as u32)));
+        }
+        pairs.sort_unstable();
+        let stop_df = (((n as f64) * stop_fraction) as usize).max(stop_min);
+        let mut t = Trigrams::default();
+        let mut i = 0;
+        while i < pairs.len() {
+            let g = pairs[i].0;
+            let mut j = i;
+            while j < pairs.len() && pairs[j].0 == g {
+                j += 1;
+            }
+            if j - i > stop_df {
+                t.stop.push(g);
+            } else {
+                t.keys.push(g);
+                t.start.push(t.post.len() as u32);
+                let mut prev = 0u32;
+                for p in &pairs[i..j] {
+                    put_varint(&mut t.post, p.1 - prev);
+                    prev = p.1;
+                }
+            }
+            i = j;
+        }
+        t.start.push(t.post.len() as u32);
+        t
+    }
+
+    fn postings(&self, g: u32) -> Option<Vec<u32>> {
+        let k = self.keys.binary_search(&g).ok()?;
+        let (mut p, end) = (self.start[k] as usize, self.start[k + 1] as usize);
+        let mut out = Vec::new();
+        let mut prev = 0u32;
+        while p < end {
+            let (mut v, mut sh) = (0u32, 0);
+            loop {
+                let b = self.post[p];
+                p += 1;
+                v |= ((b & 0x7f) as u32) << sh;
+                if b & 0x80 == 0 {
+                    break;
+                }
+                sh += 7;
+            }
+            prev += v;
+            out.push(prev);
+        }
+        Some(out)
+    }
+
+    /// Serialized size estimate: gram key + offset per gram, plus the postings, plus stop list.
+    fn size_bytes(&self) -> usize {
+        self.keys.len() * 8 + self.post.len() + self.stop.len() * 4
+    }
+
+    /// Rows whose text contains `needle`, using trigrams to narrow and verifying against the text.
+    fn find(&self, arena: &Arena, live: &dyn Fn(usize) -> bool, needle: &str) -> Vec<u32> {
+        let nb = needle.as_bytes();
+        let mut lists: Vec<Vec<u32>> = Vec::new();
+        if nb.len() >= 3 {
+            let mut gs: Vec<u32> = nb.windows(3).map(gram).collect();
+            gs.sort_unstable();
+            gs.dedup();
+            for g in gs {
+                if self.stop.binary_search(&g).is_ok() {
+                    continue;
+                }
+                match self.postings(g) {
+                    Some(l) => lists.push(l),
+                    None => return Vec::new(), // no row has this gram
+                }
+            }
+        }
+        let verify = |i: usize| live(i) && arena.get(i).contains(needle);
+        if lists.is_empty() {
+            return (0..arena.len()).filter(|&i| verify(i)).map(|i| i as u32).collect();
+        }
+        lists.sort_by_key(|l| l.len());
+        let mut cand = lists.remove(0);
+        for l in &lists {
+            let mut out = Vec::with_capacity(cand.len().min(l.len()));
+            let (mut a, mut b) = (0, 0);
+            while a < cand.len() && b < l.len() {
+                match cand[a].cmp(&l[b]) {
+                    Ordering::Less => a += 1,
+                    Ordering::Greater => b += 1,
+                    Ordering::Equal => {
+                        out.push(cand[a]);
+                        a += 1;
+                        b += 1;
+                    }
+                }
+            }
+            cand = out;
+            if cand.is_empty() {
+                return cand;
+            }
+        }
+        cand.retain(|&i| verify(i as usize));
+        cand
+    }
+}
+
+// ------------------------------------------------------------------- index ---
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IndexStats {
+    pub oracle_rows: usize,
+    pub name_bytes: usize,
+    pub text_bytes: usize,
+    pub name_grams: usize,
+    pub text_grams: usize,
+    pub name_stop: usize,
+    pub text_stop: usize,
+    /// estimated serialized size if the index were stored
+    pub name_index_bytes: usize,
+    pub text_index_bytes: usize,
+}
+
+/// Size gate: a gram present in more than max(25% of rows, 8) rows is not stored (it barely narrows).
+pub const STOP_FRACTION: f64 = 0.25;
+pub const STOP_MIN: usize = 8;
+
+pub struct SearchIndex {
+    // oracle level
+    o_live: Vec<bool>,
+    names: Arena,
+    types: Arena,
+    texts: Arena,
+    name_tri: Trigrams,
+    text_tri: Trigrams,
+    o_colors: Vec<u8>,
+    o_identity: Vec<u8>,
+    o_mv: Vec<Option<f64>>,
+    // printing level
+    p_oracle: Vec<u32>,
+    p_live: Vec<bool>,
+    p_set: Vec<String>,
+    p_cn: Vec<String>,
+    p_rarity: Vec<Option<u32>>,
+    p_released: Vec<u32>,
+    rarities: Vec<String>,
+    live_p: Bits,
+}
+
+fn mask_from_json(v: &serde_json::Value) -> Option<u8> {
+    let a = v.as_array()?;
+    Some(a.iter().filter_map(|c| c.as_str()).fold(0, |m, c| m | color_bit(c.chars().next().unwrap_or(' '))))
+}
+
+/// Typed mask, else the key kept in `extra` (non-canonical order is stored there), else (colors only)
+/// the union of the faces' colors, else 0.
+fn oracle_mask(o: &OracleRecord, typed: Option<u8>, key: &str, faces: bool) -> u8 {
+    if let Some(m) = typed {
+        return m;
+    }
+    if let Some(m) = o
+        .extra
+        .as_deref()
+        .and_then(|x| serde_json::from_str::<serde_json::Value>(x).ok())
+        .and_then(|v| v.get(key).and_then(mask_from_json))
+    {
+        return m;
+    }
+    if faces {
+        faces_color_union(o).unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+fn faces_color_union(o: &OracleRecord) -> Option<u8> {
+    let mut m = 0u8;
+    let mut any = false;
+    for f in o.faces.iter().flatten() {
+        let Some(x) = f.extra.as_deref() else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(x) else { continue };
+        if let Some(a) = v.get("colors").and_then(|c| c.as_array()) {
+            any = true;
+            for c in a.iter().filter_map(|c| c.as_str()) {
+                m |= color_bit(c.chars().next().unwrap_or(' '));
+            }
+        }
+    }
+    any.then_some(m)
+}
+
+/// WUBRG bit (same order as the file's color masks).
+fn color_bit(c: char) -> u8 {
+    match c.to_ascii_uppercase() {
+        'W' => 1,
+        'U' => 2,
+        'B' => 4,
+        'R' => 8,
+        'G' => 16,
+        _ => 0,
+    }
+}
+
+fn join_faces(top: &Option<String>, faces: &Option<Vec<crate::types::OracleFace>>, get: impl Fn(&crate::types::OracleFace) -> &Option<String>) -> String {
+    if let Some(t) = top {
+        return t.clone();
+    }
+    let mut s = String::new();
+    for f in faces.iter().flatten() {
+        if let Some(x) = get(f) {
+            if !s.is_empty() {
+                s.push('\n');
+            }
+            s.push_str(x);
+        }
+    }
+    s
+}
+
+fn rarity_rank(s: &str) -> Option<u8> {
+    match s {
+        "common" => Some(0),
+        "uncommon" => Some(1),
+        "rare" => Some(2),
+        "mythic" => Some(3),
+        _ => None,
+    }
+}
+
+impl SearchIndex {
+    pub fn build(ds: &Dataset) -> Self {
+        Self::build_with(ds, STOP_FRACTION, STOP_MIN)
+    }
+
+    pub fn build_with(ds: &Dataset, stop_fraction: f64, stop_min: usize) -> Self {
+        let no = ds.oracle.len();
+        let mut s = SearchIndex {
+            o_live: Vec::with_capacity(no),
+            names: Arena::default(),
+            types: Arena::default(),
+            texts: Arena::default(),
+            name_tri: Trigrams::default(),
+            text_tri: Trigrams::default(),
+            o_colors: Vec::with_capacity(no),
+            o_identity: Vec::with_capacity(no),
+            o_mv: Vec::with_capacity(no),
+            p_oracle: Vec::new(),
+            p_live: Vec::new(),
+            p_set: Vec::new(),
+            p_cn: Vec::new(),
+            p_rarity: Vec::new(),
+            p_released: Vec::new(),
+            rarities: ds.meta.rarities.values().iter().map(|r| r.to_string()).collect(),
+            live_p: Bits::new(ds.printings.len()),
+        };
+        for o in &ds.oracle {
+            s.o_live.push(!o.tombstone);
+            let name = o.name.clone().unwrap_or_default();
+            s.names.push(&fold(&name));
+            s.types.push(&fold(&join_faces(&o.type_line, &o.faces, |f| &f.type_line)));
+            // `~`-free; text of all faces. Reminder text is kept: Scryfall's o: matches it too.
+            s.texts.push(&fold(&join_faces(&o.oracle_text, &o.faces, |f| &f.oracle_text)));
+            s.o_colors.push(oracle_mask(o, o.colors, "colors", true));
+            s.o_identity.push(oracle_mask(o, o.color_identity, "color_identity", false));
+            s.o_mv.push(o.cmc);
+        }
+        let live = |i: usize| s.o_live[i];
+        s.name_tri = Trigrams::build(&s.names, live, stop_fraction, stop_min);
+        s.text_tri = Trigrams::build(&s.texts, live, stop_fraction, stop_min);
+        for (i, p) in ds.printings.iter().enumerate() {
+            s.p_oracle.push(p.oracle_row);
+            s.p_live.push(!p.tombstone);
+            if !p.tombstone {
+                s.live_p.set(i);
+            }
+            s.p_set.push(p.set_code.as_deref().map(fold).unwrap_or_default());
+            s.p_cn.push(p.collector_number.as_deref().map(fold).unwrap_or_default());
+            s.p_rarity.push(p.rarity);
+            s.p_released.push(p.released_at.unwrap_or(0));
+        }
+        s
+    }
+
+    pub fn stats(&self) -> IndexStats {
+        IndexStats {
+            oracle_rows: self.o_live.iter().filter(|x| **x).count(),
+            name_bytes: self.names.text.len(),
+            text_bytes: self.texts.text.len(),
+            name_grams: self.name_tri.keys.len(),
+            text_grams: self.text_tri.keys.len(),
+            name_stop: self.name_tri.stop.len(),
+            text_stop: self.text_tri.stop.len(),
+            name_index_bytes: self.name_tri.size_bytes(),
+            text_index_bytes: self.text_tri.size_bytes(),
+        }
+    }
+
+    pub fn name_of(&self, oracle_row: usize) -> &str {
+        self.names.get(oracle_row)
+    }
+
+    fn expand(&self, oracle_rows: &[u32]) -> Bits {
+        let mut o = Bits::new(self.o_live.len());
+        oracle_rows.iter().for_each(|&r| o.set(r as usize));
+        let mut b = Bits::new(self.p_oracle.len());
+        for (i, &or) in self.p_oracle.iter().enumerate() {
+            if self.p_live[i] && o.get(or as usize) {
+                b.set(i);
+            }
+        }
+        b
+    }
+
+    fn oracle_pred(&self, f: impl Fn(usize) -> bool) -> Bits {
+        let mut b = Bits::new(self.p_oracle.len());
+        for (i, &or) in self.p_oracle.iter().enumerate() {
+            if self.p_live[i] && self.o_live[or as usize] && f(or as usize) {
+                b.set(i);
+            }
+        }
+        b
+    }
+
+    fn eval(&self, e: &Expr) -> Bits {
+        match e {
+            Expr::And(v) => {
+                let mut acc = self.live_p.clone();
+                for x in v {
+                    acc.and(&self.eval(x));
+                }
+                acc
+            }
+            Expr::Or(v) => {
+                let mut acc = Bits::new(self.p_oracle.len());
+                for x in v {
+                    acc.or(&self.eval(x));
+                }
+                acc
+            }
+            Expr::Not(x) => {
+                let mut b = self.eval(x);
+                b.not_within(&self.live_p);
+                b
+            }
+            Expr::Name(q) => self.expand(&self.name_tri.find(&self.names, &|i| self.o_live[i], &fold(q))),
+            Expr::Oracle(q) => self.expand(&self.text_tri.find(&self.texts, &|i| self.o_live[i], &fold(q))),
+            Expr::Type(q) => {
+                let q = fold(q);
+                self.oracle_pred(|i| self.types.get(i).contains(&q))
+            }
+            Expr::Color(c) => {
+                let q = mask_of(&c.colors);
+                self.oracle_pred(|i| mask_cmp(self.o_colors[i], q, c.op))
+            }
+            Expr::Identity(c) => {
+                let q = mask_of(&c.colors);
+                self.oracle_pred(|i| mask_cmp(self.o_identity[i], q, c.op))
+            }
+            Expr::Mv(m) => self.oracle_pred(|i| self.o_mv[i].is_some_and(|v| num_cmp(v, m.value, m.op))),
+            Expr::Rarity(r) => {
+                let want = r.value.to_ascii_lowercase();
+                let wr = rarity_rank(&want);
+                let mut b = Bits::new(self.p_oracle.len());
+                for i in 0..self.p_oracle.len() {
+                    if !self.p_live[i] {
+                        continue;
+                    }
+                    let name = self.p_rarity[i].and_then(|id| self.rarities.get(id as usize)).map(|s| s.as_str());
+                    let ok = match (name, wr) {
+                        (Some(n), Some(w)) => match rarity_rank(n) {
+                            Some(x) => num_cmp(x as f64, w as f64, r.op),
+                            None => matches!(r.op, Op::Ne),
+                        },
+                        (Some(n), None) => (n == want) == !matches!(r.op, Op::Ne),
+                        (None, _) => false,
+                    };
+                    if ok {
+                        b.set(i);
+                    }
+                }
+                b
+            }
+            Expr::Set(s) => {
+                let s = fold(s);
+                self.printing_pred(|i| self.p_set[i] == s)
+            }
+            Expr::Cn(c) => {
+                let c = fold(c);
+                self.printing_pred(|i| self.p_cn[i] == c)
+            }
+        }
+    }
+
+    fn printing_pred(&self, f: impl Fn(usize) -> bool) -> Bits {
+        let mut b = Bits::new(self.p_oracle.len());
+        for i in 0..self.p_oracle.len() {
+            if self.p_live[i] && f(i) {
+                b.set(i);
+            }
+        }
+        b
+    }
+
+    pub fn search(&self, q: &Query) -> SearchResult {
+        let hits = match &q.expr {
+            Some(e) => {
+                let mut b = self.eval(e);
+                b.and(&self.live_p);
+                b
+            }
+            None => self.live_p.clone(),
+        };
+        let mut rows: Vec<u32> = hits.ones().map(|i| i as u32).collect();
+        let default = [SortKey { field: SortField::Released, desc: true }, SortKey { field: SortField::Name, desc: false }];
+        let keys: &[SortKey] = if q.sort.is_empty() { &default } else { &q.sort };
+        rows.sort_by(|&a, &b| {
+            for k in keys {
+                let (a, b) = (a as usize, b as usize);
+                let (oa, ob) = (self.p_oracle[a] as usize, self.p_oracle[b] as usize);
+                let ord = match k.field {
+                    SortField::Released => self.p_released[a].cmp(&self.p_released[b]),
+                    SortField::Name => self.names.get(oa).cmp(self.names.get(ob)),
+                    SortField::Mv => self.o_mv[oa].unwrap_or(0.0).total_cmp(&self.o_mv[ob].unwrap_or(0.0)),
+                    SortField::Rarity => self.rarity_key(a).cmp(&self.rarity_key(b)),
+                };
+                let ord = if k.desc { ord.reverse() } else { ord };
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            a.cmp(&b)
+        });
+        if q.unique == Unique::Cards {
+            let mut seen = Bits::new(self.o_live.len());
+            rows.retain(|&r| {
+                let o = self.p_oracle[r as usize] as usize;
+                !false_if_new(&mut seen, o)
+            });
+        }
+        let total = rows.len();
+        let end = q.limit.map_or(total, |l| (q.offset + l).min(total));
+        let rows = if q.offset >= total { Vec::new() } else { rows[q.offset..end].to_vec() };
+        SearchResult { total, rows }
+    }
+
+    fn rarity_key(&self, p: usize) -> i32 {
+        self.p_rarity[p]
+            .and_then(|id| self.rarities.get(id as usize))
+            .and_then(|n| rarity_rank(n))
+            .map_or(-1, |r| r as i32)
+    }
+}
+
+/// Marks `o` seen; returns true if it was already seen.
+fn false_if_new(seen: &mut Bits, o: usize) -> bool {
+    let was = seen.get(o);
+    seen.set(o);
+    was
+}
+
+fn mask_of(s: &str) -> u8 {
+    s.chars().fold(0, |m, c| m | color_bit(c))
+}
+
+/// `a` = the card's colors, `b` = the query's. Scryfall semantics: `:` and `>=` mean "includes".
+fn mask_cmp(a: u8, b: u8, op: Op) -> bool {
+    match op {
+        Op::Colon | Op::Ge => a & b == b,
+        Op::Gt => a & b == b && a != b,
+        Op::Eq => a == b,
+        Op::Ne => a != b,
+        Op::Le => a & b == a,
+        Op::Lt => a & b == a && a != b,
+    }
+}
+
+fn num_cmp(a: f64, b: f64, op: Op) -> bool {
+    match op {
+        Op::Colon | Op::Eq => a == b,
+        Op::Ne => a != b,
+        Op::Lt => a < b,
+        Op::Le => a <= b,
+        Op::Gt => a > b,
+        Op::Ge => a >= b,
+    }
+}
