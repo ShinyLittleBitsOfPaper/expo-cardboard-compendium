@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- 2026-10-24, 0.0.1-11: `daily.sh` labelled releases by date only, so the 21:05 bulk collided with the 09:05 one ("already exists"). Labels are now bulk `updated_at` as YYYYMMDDHHMM (source_date stays YYYYMMDD); `fetch-bulk.sh` records `<out>.updated_at` and skips download only when it is unchanged (was: file <24h old). Old `cards-20261024.coqd` stays valid as the prev release.
+
+### Fixed
 - 2026-10-24, 0.0.1-10: `scripts/daily.sh` printed only the last 4 lines of each compile, hiding the derived-URL and healed counts; it now prints a summary of counts, derived keys, healed printings and section sizes. First real v2 run: 27.3 MB file (was 33.6), compile 27 s + write 10 s.
 
 ### Added

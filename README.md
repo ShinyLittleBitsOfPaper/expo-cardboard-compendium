@@ -35,14 +35,14 @@ No network? `coqc synth 100000 data/synth.jsonl [--day N]` writes Scryfall-shape
 scripts/daily.sh                 # fetch -> compile on top of the latest release -> patch -> verify the patch
 ```
 
-Keeps `data/daily/releases/cards-YYYYMMDD.coqd` and `patches/<old>-to-<new>.coqp`. By hand:
+Keeps `data/daily/releases/cards-YYYYMMDDHHMM.coqd` and `patches/<old>-to-<new>.coqp`. By hand:
 `coqc patch old.coqd new.coqd -o p.coqp`, `coqc apply old.coqd p.coqp -o new.coqd` (verifies SHA-256).
 
 ## Layout
 
 - `crates/format`: `coqc-format` (records, container, card JSON reconstruction)
 - `crates/compiler`: `coqc` (library + CLI)
-- `scripts/fetch-bulk.sh`: bulk download with Scryfall-friendly headers and a 24h cache
+- `scripts/fetch-bulk.sh`: bulk download with Scryfall-friendly headers; skips when updated_at is unchanged
 - `docs/format.md`: file format spec; `docs/phase0.md`: findings, open questions, next steps
 
 ## Guarantees (tested)

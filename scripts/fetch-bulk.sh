@@ -2,7 +2,7 @@
 # Download Scryfall bulk data (default: default_cards) into ./data as plain JSONL.
 #   scripts/fetch-bulk.sh [dest_dir] [--force] [--type default_cards]
 # Follows Scryfall's API etiquette: identifying User-Agent, Accept header, and
-# no re-download within 24h (bulk files only refresh every 12-24h anyway).
+# no re-download while updated_at is unchanged (bulk files refresh ~every 12h); sidecar <out>.updated_at.
 # Env: COQC_USER_AGENT (please include a contact), COQC_BULK_META_URL (testing).
 set -euo pipefail
 
@@ -35,8 +35,9 @@ fi
 base="${uri%%\?*}"; name="${base##*/}"        # e.g. default-cards-20261022210550.jsonl.gz
 plain="${name%.gz}"
 out="$DEST/${TYPE//_/-}.${plain##*.}"         # data/default-cards.jsonl
-if [ -f "$out" ] && [ "$FORCE" = 0 ] && [ -n "$(find "$out" -mmin -1440 2>/dev/null)" ]; then
-  echo "$out is under 24h old; use --force to re-download"; exit 0
+# Skip when the bulk file's updated_at matches what we already have (the metadata call is cheap).
+if [ -f "$out" ] && [ "$FORCE" = 0 ] && [ -n "$updated" ] && [ "$(cat "$out.updated_at" 2>/dev/null)" = "$updated" ]; then
+  echo "$out is already at updated_at $updated; use --force to re-download"; exit 0
 fi
 
 echo "downloading $uri (updated_at $updated)"
@@ -48,4 +49,5 @@ else
   mv "$out.part" "$out"
 fi
 head -c 1 "$out" | grep -q '\[' && fmt="JSON array" || fmt="JSON lines"
+printf '%s' "$updated" > "$out.updated_at"
 echo "saved $out ($(du -h "$out" | cut -f1), $fmt, updated_at $updated)"
