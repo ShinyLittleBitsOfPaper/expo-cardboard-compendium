@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- 2026-10-25, 0.0.1-21: default hiding corrected from real Scryfall results: funny sets (Un-sets) are visible; hidden are vanguard/planar/scheme/phenomenon/art_series layouts, set_type memorabilia, and promo_type `playtest` cards. Expected `o:"~ enters tapped" --cards` = 762 (757 + 5 Un-set cards). Real-data check pending. Tests: 32.
+
 ### Added
 - 2026-10-25, 0.0.1-20: default hiding of extras like Scryfall: printings with layout vanguard/planar/scheme/phenomenon/art_series or set_type memorabilia/funny are hidden unless `include:extras` or the query names a type (`t:`) or set (`s:`/`e:`). New `Query.include_extras`; set_type is read from the printing's residual JSON at index build. `coqc search` now uses the full parser (default unique cards, name order; `--cards` still forces unique cards). Real data after -19 patch: 1.83 MB one-time for +11,954 printings/+3,243 oracle rows (file 29.70 MB). `o:"~ enters tapped"` was 768 before hiding vs Scryfall 762. Tests: 32.
 

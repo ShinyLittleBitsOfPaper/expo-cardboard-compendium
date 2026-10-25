@@ -66,4 +66,4 @@ stable and append-only, trigram posting lists change mostly at the tail; an inde
 (+ appended per-row columns), expected small. Plan: serialize `SearchIndex` (columns + stop grams + postings), measure
 full size and a real 12 h index delta, then decide delta vs full replace.
 
-Default hiding (Scryfall): layout vanguard/planar/scheme/phenomenon/art_series and set_type memorabilia/funny are hidden unless `include:extras` or the query contains a `t:` or `s:`/`e:` term (anywhere, approximation). Tokens/emblems not hidden yet (unverified).
+Default hiding (Scryfall): layout vanguard/planar/scheme/phenomenon/art_series, set_type memorabilia and promo_types `playtest` (cmb1/cmb2/unk) are hidden; other funny sets (ugl, unh, unf, ...) are visible, verified against Scryfall unless `include:extras` or the query contains a `t:` or `s:`/`e:` term (anywhere, approximation). Tokens/emblems not hidden yet (unverified).

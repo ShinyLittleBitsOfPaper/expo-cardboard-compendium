@@ -130,7 +130,7 @@ pub struct Query {
     pub sort: Vec<SortKey>,
     #[serde(default)]
     pub unique: Unique,
-    /// Reveal vanguard/plane/scheme/phenomenon, memorabilia and funny-set cards (Scryfall hides them unless
+    /// Reveal vanguard/plane/scheme/phenomenon, memorabilia and playtest cards (Scryfall hides them unless
     /// `include:extras`, or the query names a type or set).
     #[serde(default)]
     pub include_extras: bool,
@@ -596,6 +596,7 @@ impl SearchIndex {
             hidden_p: Bits::new(ds.printings.len()),
         };
         let layouts = ds.meta.layouts.values();
+        let promo_types = ds.meta.promo_types.values();
         for o in &ds.oracle {
             s.o_live.push(!o.tombstone);
             let name = o.name.clone().unwrap_or_default();
@@ -626,7 +627,8 @@ impl SearchIndex {
             }
             let layout = p.layout.and_then(|l| layouts.get(l as usize)).map(|x| x.as_str());
             let set_type = p.extra.as_deref().and_then(json_str_field_set_type);
-            if matches!(layout, Some("vanguard" | "planar" | "scheme" | "phenomenon" | "art_series")) || matches!(set_type, Some("memorabilia" | "funny")) {
+            let playtest = p.promo_types.as_ref().is_some_and(|v| v.iter().any(|&t| promo_types.get(t as usize).is_some_and(|n| n == "playtest")));
+            if matches!(layout, Some("vanguard" | "planar" | "scheme" | "phenomenon" | "art_series")) || matches!(set_type, Some("memorabilia")) || playtest {
                 s.hidden_p.set(i);
             }
             s.p_set.push(p.set_code.as_deref().map(fold).unwrap_or_default());
