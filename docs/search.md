@@ -52,6 +52,16 @@ four-color), `c`/`colorless`, `m`/`multicolor`, numeric counts; `mv:even|odd`; `
 (name released cmc rarity), `direction:`, `unique:` (cards prints), `include:extras` (accepted, no-op). Unknown or
 unsupported keywords and `~` in oracle text are errors, as on Scryfall. Default direction (no `direction:`): released desc,
 others asc (rarity default unverified).
+Defaults (as Scryfall): `unique:cards`, `prefer:newest`, alphabetical order. `prefer:oldest` supported; others (usd-low, promo, ...) TODO.
+Name matching ignores `'`, `’` and `,` (confirmed: "krrik son" finds "K'rrik, Son of Yawgmoth"); other punctuation unverified.
+`o:` ignores reminder text (parenthesised spans), `fo:` includes it. `~` = the card's own name (full name, a face name, or the
+part before the first comma); unverified whether Scryfall's `~` also matches templating like "this creature".
 Parser TODO: `~` in oracle text, `m:`/`mana:`, `is:`/`has:`/`f:`/`in:`/`b:`/`st:`/`lang:`, price keys, `a:`/`ft:`/`wm:`,
 `unique:art`, `prefer:`, regex, `include:extras` + default hiding of funny/vanguard/memorabilia, `keyword:`, `pow/tou/loy`.
-Unverified: whether Scryfall ignores `'`/`,` in names.
+
+## Compile-time index (proposed; not implemented)
+Build the search index in the compiler and ship it as a separate artifact (`.coqs`) keyed to the dataset hash, so devices
+only map it (no ~0.4-1+ s build, no extra RAM). Cost: the index must be refreshed with each dataset refresh. Because row ids are
+stable and append-only, trigram posting lists change mostly at the tail; an index patch = per-gram add/remove row lists
+(+ appended per-row columns), expected small. Plan: serialize `SearchIndex` (columns + stop grams + postings), measure
+full size and a real 12 h index delta, then decide delta vs full replace.

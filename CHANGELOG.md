@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- 2026-10-24, 0.0.1-17: Scryfall defaults and text semantics. Parser default is `unique:cards`, `prefer:newest` (new `Query.prefer`, picks the printing before sorting), alphabetical order; `prefer:oldest`. Names ignore `'`, `’`, `,` (separate normalised name arena). `o:` now excludes reminder text, new `fo:`/`fulloracle` leaf `fulloracle`; text trigrams cover both texts. `~` in oracle queries = the card's own name (full/face/pre-comma). Tests: 30.
+
+### Added
 - 2026-10-24, 0.0.1-16: Scryfall-syntax parser in Rust (`coqc_format::parse::parse(&str) -> Query`): and/or/parens/negation, quoted and `!exact`, named colors, `c:m`, numeric color counts, `mv:even|odd`, `cn` ranges, `order:`/`direction:`/`unique:`; unsupported keywords error. New plan leaves `mvparity`, `cnnum`. `quick.rs` now wraps it. Tests: 29 (3 new parser tests). Not run on real data.
 
 ### Added

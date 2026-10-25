@@ -33,24 +33,26 @@ struct P {
     order: Option<SortField>,
     dir: Option<bool>,
     unique: Unique,
+    prefer: Prefer,
 }
 
 pub fn parse(q: &str) -> R<Query> {
-    let mut p = P { c: q.chars().collect(), i: 0, order: None, dir: None, unique: Unique::Prints };
+    let mut p = P { c: q.chars().collect(), i: 0, order: None, dir: None, unique: Unique::Cards, prefer: Prefer::Newest };
     let expr = p.or()?;
     p.ws();
     if p.i < p.c.len() {
         return err("unbalanced ')'");
     }
-    let mut out = Query { expr, unique: p.unique, ..Default::default() };
+    let mut out = Query { expr, unique: p.unique, prefer: p.prefer, ..Default::default() };
     if let Some(f) = p.order {
         let desc = p.dir.unwrap_or(matches!(f, SortField::Released));
         out.sort = vec![SortKey { field: f, desc }];
         if f != SortField::Name {
             out.sort.push(SortKey { field: SortField::Name, desc: false });
         }
-    } else if let Some(d) = p.dir {
-        out.sort = vec![SortKey { field: SortField::Name, desc: d }];
+    } else {
+        // Scryfall default: alphabetical
+        out.sort = vec![SortKey { field: SortField::Name, desc: p.dir.unwrap_or(false) }];
     }
     Ok(out)
 }
@@ -198,13 +200,8 @@ impl P {
         Ok(Some(match key {
             "name" => { text_op(op)?; Expr::Name(v.into()) }
             "t" | "type" => { text_op(op)?; Expr::Type(v.into()) }
-            "o" | "oracle" | "fo" => {
-                text_op(op)?;
-                if v.contains('~') {
-                    return err("`~` in oracle text is not supported yet");
-                }
-                Expr::Oracle(v.into())
-            }
+            "o" | "oracle" => { text_op(op)?; Expr::Oracle(v.into()) }
+            "fo" | "fulloracle" => { text_op(op)?; Expr::FullOracle(v.into()) }
             "c" | "color" | "colors" => color(op, v, false)?,
             "id" | "identity" | "ci" => color(op, v, true)?,
             "mv" | "manavalue" | "cmc" => {
@@ -253,6 +250,14 @@ impl P {
                     "cards" => Unique::Cards,
                     "prints" => Unique::Prints,
                     x => return err(format!("unsupported unique: {x}")),
+                };
+                return Ok(None);
+            }
+            "prefer" => {
+                self.prefer = match v.to_ascii_lowercase().as_str() {
+                    "newest" => Prefer::Newest,
+                    "oldest" => Prefer::Oldest,
+                    x => return err(format!("unsupported prefer: {x}")),
                 };
                 return Ok(None);
             }
@@ -332,6 +337,8 @@ mod tests {
         assert!(parse("(a").is_err());
         assert!(parse("a)").is_err());
         assert!(parse("c:xyz").is_err());
-        assert!(parse("o:\"~ enters\"").is_err());
+        assert_eq!(parse("fo:flying").unwrap().expr, Some(Expr::FullOracle("flying".into())));
+        let d = parse("bolt").unwrap();
+        assert_eq!((d.unique, d.prefer, d.sort[0].field, d.sort[0].desc), (Unique::Cards, Prefer::Newest, SortField::Name, false));
     }
 }

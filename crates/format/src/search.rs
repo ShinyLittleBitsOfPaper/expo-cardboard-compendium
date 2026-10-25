@@ -60,8 +60,10 @@ pub enum Expr {
     Not(Box<Expr>),
     /// substring of the card name (all faces)
     Name(String),
-    /// substring of oracle text (all faces)
+    /// substring of oracle text without reminder text (all faces); `~` stands for the card's own name
     Oracle(String),
+    /// substring of full oracle text including reminder text (`fo:`); `~` as above
+    FullOracle(String),
     /// substring of type line (all faces)
     Type(String),
     /// `mv:even` / `mv:odd` (value is `"even"` or `"odd"`; fractional values match neither)
@@ -105,8 +107,17 @@ pub enum Unique {
     /// every printing
     #[default]
     Prints,
-    /// first printing (in sort order) of each oracle card
+    /// one printing per oracle card, chosen by `prefer` before sorting
     Cards,
+}
+
+/// Which printing represents a card when `unique` is `Cards` (`prefer:`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Prefer {
+    #[default]
+    Newest,
+    Oldest,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -119,6 +130,8 @@ pub struct Query {
     pub sort: Vec<SortKey>,
     #[serde(default)]
     pub unique: Unique,
+    #[serde(default)]
+    pub prefer: Prefer,
     #[serde(default)]
     pub offset: usize,
     /// None = no limit
@@ -154,6 +167,25 @@ fn fold_char(c: char, out: &mut String) {
             x => out.push(x),
         }
     }
+}
+
+/// Name key: `fold` with apostrophes and commas removed ("krrik son" finds "K'rrik, Son of Yawgmoth", as on Scryfall).
+pub fn fold_name(s: &str) -> String {
+    fold(s).chars().filter(|c| !matches!(c, '\'' | '’' | ',')).collect()
+}
+
+/// Oracle text without reminder text (parenthesised spans); Scryfall's `o:` ignores reminder text, `fo:` keeps it.
+pub fn strip_reminder(s: &str) -> String {
+    let (mut out, mut depth) = (String::with_capacity(s.len()), 0u32);
+    for c in s.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth > 0 => depth -= 1,
+            c if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join("\n")
 }
 
 /// Lowercase + strip common Latin accents; the same function is applied to text and needles.
@@ -393,9 +425,11 @@ pub const STOP_MIN: usize = 8;
 pub struct SearchIndex {
     // oracle level
     o_live: Vec<bool>,
-    names: Arena,
+    names: Arena,   // fold(name): sort, `~` variants
+    names_n: Arena, // fold_name(name): name search / exact
     types: Arena,
-    texts: Arena,
+    texts: Arena,      // reminder text stripped (o:)
+    full_texts: Arena, // full text (fo:)
     name_tri: Trigrams,
     text_tri: Trigrams,
     o_colors: Vec<u8>,
@@ -504,8 +538,10 @@ impl SearchIndex {
         let mut s = SearchIndex {
             o_live: Vec::with_capacity(no),
             names: Arena::default(),
+            names_n: Arena::default(),
             types: Arena::default(),
             texts: Arena::default(),
+            full_texts: Arena::default(),
             name_tri: Trigrams::default(),
             text_tri: Trigrams::default(),
             o_colors: Vec::with_capacity(no),
@@ -524,16 +560,24 @@ impl SearchIndex {
             s.o_live.push(!o.tombstone);
             let name = o.name.clone().unwrap_or_default();
             s.names.push(&fold(&name));
+            s.names_n.push(&fold_name(&name));
             s.types.push(&fold(&join_faces(&o.type_line, &o.faces, |f| &f.type_line)));
-            // `~`-free; text of all faces. Reminder text is kept: Scryfall's o: matches it too.
-            s.texts.push(&fold(&join_faces(&o.oracle_text, &o.faces, |f| &f.oracle_text)));
+            let full = join_faces(&o.oracle_text, &o.faces, |f| &f.oracle_text);
+            s.texts.push(&fold(&strip_reminder(&full)));
+            s.full_texts.push(&fold(&full));
             s.o_colors.push(oracle_mask(o, o.colors, "colors", true));
             s.o_identity.push(oracle_mask(o, o.color_identity, "color_identity", false));
             s.o_mv.push(o.cmc);
         }
         let live = |i: usize| s.o_live[i];
-        s.name_tri = Trigrams::build(&s.names, live, stop_fraction, stop_min);
-        s.text_tri = Trigrams::build(&s.texts, live, stop_fraction, stop_min);
+        s.name_tri = Trigrams::build(&s.names_n, live, stop_fraction, stop_min);
+        // grams of stripped AND full text (so grams spanning a removed reminder are indexed too); a row's text is
+        // a superset check only, each query verifies against the arena it targets.
+        let mut both = Arena::default();
+        for i in 0..s.texts.len() {
+            both.push(&format!("{}\u{0}{}", s.texts.get(i), s.full_texts.get(i)));
+        }
+        s.text_tri = Trigrams::build(&both, live, stop_fraction, stop_min);
         for (i, p) in ds.printings.iter().enumerate() {
             s.p_oracle.push(p.oracle_row);
             s.p_live.push(!p.tombstone);
@@ -609,8 +653,9 @@ impl SearchIndex {
                 b.not_within(&self.live_p);
                 b
             }
-            Expr::Name(q) => self.expand(&self.name_tri.find(&self.names, &|i| self.o_live[i], &fold(q))),
-            Expr::Oracle(q) => self.expand(&self.text_tri.find(&self.texts, &|i| self.o_live[i], &fold(q))),
+            Expr::Name(q) => self.expand(&self.name_tri.find(&self.names_n, &|i| self.o_live[i], &fold_name(q))),
+            Expr::Oracle(q) => self.expand(&self.text_find(&self.texts, q)),
+            Expr::FullOracle(q) => self.expand(&self.text_find(&self.full_texts, q)),
             Expr::Type(q) => {
                 let q = fold(q);
                 self.oracle_pred(|i| self.types.get(i).contains(&q))
@@ -624,9 +669,9 @@ impl SearchIndex {
                 d.parse::<f64>().is_ok_and(|v| num_cmp(v, m.value, m.op))
             }),
             Expr::NameExact(q) => {
-                let q = fold(q);
+                let q = fold_name(q);
                 self.oracle_pred(|i| {
-                    let n = self.names.get(i);
+                    let n = self.names_n.get(i);
                     n == q || n.split(" // ").any(|f| f == q)
                 })
             }
@@ -677,6 +722,38 @@ impl SearchIndex {
         }
     }
 
+    /// Oracle rows whose `arena` text contains `q`; each `~` stands for the card's own name (full name, a face
+    /// name, or the part before the first comma, since oracle text abbreviates legendary names).
+    fn text_find(&self, arena: &Arena, q: &str) -> Vec<u32> {
+        let q = fold(q);
+        if !q.contains('~') {
+            return self.text_tri.find(arena, &|i| self.o_live[i], &q);
+        }
+        let parts: Vec<&str> = q.split('~').collect();
+        let lit = parts.iter().max_by_key(|p| p.len()).copied().unwrap_or("");
+        let cand: Vec<u32> = if lit.len() >= 3 {
+            // narrow by the longest `~`-free literal (verify happens below against the substituted needle)
+            self.text_tri.find(arena, &|i| self.o_live[i], lit)
+        } else {
+            (0..arena.len() as u32).filter(|&i| self.o_live[i as usize]).collect()
+        };
+        cand.into_iter()
+            .filter(|&i| {
+                let name = self.names.get(i as usize);
+                let mut variants: Vec<&str> = vec![name];
+                for f in name.split(" // ") {
+                    variants.push(f);
+                    if let Some((short, _)) = f.split_once(',') {
+                        variants.push(short);
+                    }
+                }
+                let text = arena.get(i as usize);
+                variants.iter().any(|v| text.contains(&parts.join(v)))
+            })
+            .map(|i| i)
+            .collect()
+    }
+
     fn printing_pred(&self, f: impl Fn(usize) -> bool) -> Bits {
         let mut b = Bits::new(self.p_oracle.len());
         for i in 0..self.p_oracle.len() {
@@ -697,6 +774,22 @@ impl SearchIndex {
             None => self.live_p.clone(),
         };
         let mut rows: Vec<u32> = hits.ones().map(|i| i as u32).collect();
+        if q.unique == Unique::Cards {
+            // one printing per card, chosen by `prefer` (ties: later/earlier row), before sorting
+            let mut best: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+            for &r in &rows {
+                let o = self.p_oracle[r as usize];
+                let better = |cur: u32| {
+                    let (a, b) = (self.p_released[r as usize], self.p_released[cur as usize]);
+                    match q.prefer {
+                        Prefer::Newest => (a, !r) > (b, !cur),
+                        Prefer::Oldest => (a, r) < (b, cur),
+                    }
+                };
+                best.entry(o).and_modify(|c| if better(*c) { *c = r }).or_insert(r);
+            }
+            rows.retain(|r| best[&self.p_oracle[*r as usize]] == *r);
+        }
         let default = [SortKey { field: SortField::Released, desc: true }, SortKey { field: SortField::Name, desc: false }];
         let keys: &[SortKey] = if q.sort.is_empty() { &default } else { &q.sort };
         rows.sort_by(|&a, &b| {
@@ -716,13 +809,6 @@ impl SearchIndex {
             }
             a.cmp(&b)
         });
-        if q.unique == Unique::Cards {
-            let mut seen = Bits::new(self.o_live.len());
-            rows.retain(|&r| {
-                let o = self.p_oracle[r as usize] as usize;
-                !false_if_new(&mut seen, o)
-            });
-        }
         let total = rows.len();
         let end = q.limit.map_or(total, |l| (q.offset + l).min(total));
         let rows = if q.offset >= total { Vec::new() } else { rows[q.offset..end].to_vec() };
@@ -737,12 +823,6 @@ impl SearchIndex {
     }
 }
 
-/// Marks `o` seen; returns true if it was already seen.
-fn false_if_new(seen: &mut Bits, o: usize) -> bool {
-    let was = seen.get(o);
-    seen.set(o);
-    was
-}
 
 fn mask_of(s: &str) -> u8 {
     s.chars().fold(0, |m, c| m | color_bit(c))

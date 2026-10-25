@@ -100,3 +100,20 @@ fn scryfall_semantics_leaves() {
     // rarity order: ... rare < special < mythic < bonus
     assert!(run(r#"{"rarity":{"op":">","value":"rare"}}"#).len() >= run(r#"{"rarity":{"op":">=","value":"mythic"}}"#).len());
 }
+
+#[test]
+fn name_punctuation_tilde_reminder_and_prefer() {
+    let (ds, _) = setup();
+    assert_eq!(names(&ds, "\"lim-duls vault\"", Unique::Cards), vec!["Lim-Dûl's Vault"]);
+    assert_eq!(names(&ds, "\"lim-dul's, vault\"", Unique::Cards), vec!["Lim-Dûl's Vault"]);
+    assert_eq!(names(&ds, "o:\"~ deals 2 damage\"", Unique::Cards), vec!["Fire // Ice"]);
+    assert_eq!(names(&ds, "o:\"~ deals 3\"", Unique::Cards), vec!["Lightning Bolt"]);
+    assert_eq!(coqc_format::search::strip_reminder("Flying (It can't be blocked.)\nHaste (Go.) now"), "Flying\nHaste now");
+    // unique:cards keeps the newest printing before sorting
+    let (_, ix) = setup();
+    let q = coqc_format::parse::parse("!\"lightning bolt\"").unwrap();
+    let r = ix.search(&q);
+    assert_eq!(r.rows.len(), 1);
+    let all = ix.search(&Query { expr: q.expr.clone(), unique: Unique::Prints, ..Default::default() });
+    assert_eq!(r.rows[0], all.rows[0]); // default sort released desc => newest first
+}
