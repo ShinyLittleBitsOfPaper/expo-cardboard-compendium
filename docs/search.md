@@ -2,7 +2,7 @@
 
 Code: `crates/format/src/search.rs` (shared by compiler CLI and the future Rust engine).
 CLI: `coqc search <file> <query> [--plan JSON] [--cards] [--limit N] [--offset N]`, `coqc index-stats <file>`.
-`crates/compiler/src/quick.rs` is a throwaway parser for the CLI/tests only; the app's searchParser must emit the plan JSON.
+Parser: `crates/format/src/parse.rs` (`parse(&str) -> Query`, Scryfall syntax). `compiler/src/quick.rs` is a thin wrapper (drops sort/unique) used by the CLI.
 
 ## Decisions
 - **The index is derived, never stored or patched.** Built from the records at load (and after a patch);
@@ -46,7 +46,12 @@ Goal: mirror Scryfall's search syntax (https://scryfall.com/docs/syntax) in a st
 conventions differ, Scryfall wins. App-specific features (tags, collection state) are the host app's: it resolves
 them to ids and passes a scoped set (`registerSet`). Parser moves into Rust (`parse(&str) -> Query`) taking the
 raw Scryfall query string; plan JSON stays as IR/debug form.
-Parser TODO: named color sets (guilds, shards, colleges, wedges, four-color), `c:m`/`multicolor` (= count>=2),
-`colorless`, `-` negation, `or`/parentheses, quoted phrases, `!"exact"`, `~` in oracle text, `fo:`, `m:`/`mana:`,
-`mv:even|odd`, `cn` ranges, `e:`/`b:`/`in:`/`st:`, `is:`/`has:`, `include:extras` (funny/vanguard/memorabilia hidden
-by default), `unique:`/`order:`/`direction:`/`prefer:`. Unverified: whether Scryfall ignores `'`/`,` in names.
+Parser supports: bare words, `"phrases"`, `!"exact"`, `-` negation, `( )`, `or`/`and`; keys `name t/type o/oracle/fo c/color id/identity/ci
+mv/manavalue/cmc r/rarity (full names or c/u/r/m) s/set/e/edition cn/number`; color names (guilds, shards, colleges, wedges,
+four-color), `c`/`colorless`, `m`/`multicolor`, numeric counts; `mv:even|odd`; `cn` numeric ranges; directives `order:`
+(name released cmc rarity), `direction:`, `unique:` (cards prints), `include:extras` (accepted, no-op). Unknown or
+unsupported keywords and `~` in oracle text are errors, as on Scryfall. Default direction (no `direction:`): released desc,
+others asc (rarity default unverified).
+Parser TODO: `~` in oracle text, `m:`/`mana:`, `is:`/`has:`/`f:`/`in:`/`b:`/`st:`/`lang:`, price keys, `a:`/`ft:`/`wm:`,
+`unique:art`, `prefer:`, regex, `include:extras` + default hiding of funny/vanguard/memorabilia, `keyword:`, `pow/tou/loy`.
+Unverified: whether Scryfall ignores `'`/`,` in names.

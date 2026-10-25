@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- 2026-10-24, 0.0.1-16: Scryfall-syntax parser in Rust (`coqc_format::parse::parse(&str) -> Query`): and/or/parens/negation, quoted and `!exact`, named colors, `c:m`, numeric color counts, `mv:even|odd`, `cn` ranges, `order:`/`direction:`/`unique:`; unsupported keywords error. New plan leaves `mvparity`, `cnnum`. `quick.rs` now wraps it. Tests: 29 (3 new parser tests). Not run on real data.
+
+### Added
 - 2026-10-24, 0.0.1-15: search follows Scryfall conventions (slbop-isms dropped). Reverted name punctuation stripping and `typeeq`/`oracleeq` (not Scryfall); rarity order is now common<uncommon<rare<special<mythic<bonus; added `nameexact` (`!"name"`). Kept identity `:` = subset, `colorcount`/`identitycount`. Docs: standalone-module scope + parser TODO. Tests: 26. Supersedes -14's slbop-parity notes.
 - 2026-10-24, 0.0.1-14: (superseded by -15) added slbop-parity leaves.
 

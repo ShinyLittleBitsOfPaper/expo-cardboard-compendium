@@ -2,6 +2,7 @@
 pub mod codec;
 pub mod container;
 pub mod json;
+pub mod parse;
 pub mod prices;
 pub mod search;
 pub mod types;

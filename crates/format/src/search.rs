@@ -64,6 +64,10 @@ pub enum Expr {
     Oracle(String),
     /// substring of type line (all faces)
     Type(String),
+    /// `mv:even` / `mv:odd` (value is `"even"` or `"odd"`; fractional values match neither)
+    MvParity(String),
+    /// collector number compared numerically by its leading digits (`cn>50`); `cn:`/`cn=` use exact `Cn`
+    CnNum(MvCmp),
     /// `!"name"`: whole card name equals (case/accent-folded) either the full name or one face
     NameExact(String),
     /// number of colors / identity colors compared with `value` (`c>=2`, `id=3`)
@@ -611,6 +615,14 @@ impl SearchIndex {
                 let q = fold(q);
                 self.oracle_pred(|i| self.types.get(i).contains(&q))
             }
+            Expr::MvParity(w) => {
+                let odd = w.eq_ignore_ascii_case("odd");
+                self.oracle_pred(|i| self.o_mv[i].is_some_and(|v| v.fract() == 0.0 && ((v as i64) % 2 != 0) == odd))
+            }
+            Expr::CnNum(m) => self.printing_pred(|i| {
+                let d: String = self.p_cn[i].chars().take_while(|c| c.is_ascii_digit()).collect();
+                d.parse::<f64>().is_ok_and(|v| num_cmp(v, m.value, m.op))
+            }),
             Expr::NameExact(q) => {
                 let q = fold(q);
                 self.oracle_pred(|i| {
