@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- 2026-10-25, 0.0.1-20: default hiding of extras like Scryfall: printings with layout vanguard/planar/scheme/phenomenon/art_series or set_type memorabilia/funny are hidden unless `include:extras` or the query names a type (`t:`) or set (`s:`/`e:`). New `Query.include_extras`; set_type is read from the printing's residual JSON at index build. `coqc search` now uses the full parser (default unique cards, name order; `--cards` still forces unique cards). Real data after -19 patch: 1.83 MB one-time for +11,954 printings/+3,243 oracle rows (file 29.70 MB). `o:"~ enters tapped"` was 768 before hiding vs Scryfall 762. Tests: 32.
+
 ### Changed
 - 2026-10-25, 0.0.1-19: compile now includes digital-only and art_series printings by default (Scryfall search includes them; `o:"~ enters tapped"` was 5 short because Alchemy cards like Potential Horizon were skipped). New flags `--skip-digital`, `--skip-art-series` (Options `skip_digital`/`skip_art_series`); `verify` tolerates datasets compiled with skips. Expect ~11.9k appended rows (9,168 digital + 2,775 art_series) in the next patch from a previous release (one-time, size unmeasured). Default hiding of extras at search time still TODO. Tests: 31.
 

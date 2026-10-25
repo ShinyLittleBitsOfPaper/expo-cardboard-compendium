@@ -49,7 +49,7 @@ raw Scryfall query string; plan JSON stays as IR/debug form.
 Parser supports: bare words, `"phrases"`, `!"exact"`, `-` negation, `( )`, `or`/`and`; keys `name t/type o/oracle/fo c/color id/identity/ci
 mv/manavalue/cmc r/rarity (full names or c/u/r/m) s/set/e/edition cn/number`; color names (guilds, shards, colleges, wedges,
 four-color), `c`/`colorless`, `m`/`multicolor`, numeric counts; `mv:even|odd`; `cn` numeric ranges; directives `order:`
-(name released cmc rarity), `direction:`, `unique:` (cards prints), `include:extras` (accepted, no-op). Unknown or
+(name released cmc rarity), `direction:`, `unique:` (cards prints), `include:extras` (reveals hidden extras). Unknown or
 unsupported keywords and `~` in oracle text are errors, as on Scryfall. Default direction (no `direction:`): released desc,
 others asc (rarity default unverified).
 Defaults (as Scryfall): `unique:cards`, `prefer:newest`, alphabetical order. `prefer:oldest` supported; others (usd-low, promo, ...) TODO.
@@ -65,3 +65,5 @@ only map it (no ~0.4-1+ s build, no extra RAM). Cost: the index must be refreshe
 stable and append-only, trigram posting lists change mostly at the tail; an index patch = per-gram add/remove row lists
 (+ appended per-row columns), expected small. Plan: serialize `SearchIndex` (columns + stop grams + postings), measure
 full size and a real 12 h index delta, then decide delta vs full replace.
+
+Default hiding (Scryfall): layout vanguard/planar/scheme/phenomenon/art_series and set_type memorabilia/funny are hidden unless `include:extras` or the query contains a `t:` or `s:`/`e:` term (anywhere, approximation). Tokens/emblems not hidden yet (unverified).

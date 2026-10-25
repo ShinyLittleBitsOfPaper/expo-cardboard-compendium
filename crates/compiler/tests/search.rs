@@ -117,3 +117,14 @@ fn name_punctuation_tilde_reminder_and_prefer() {
     let all = ix.search(&Query { expr: q.expr.clone(), unique: Unique::Prints, ..Default::default() });
     assert_eq!(r.rows[0], all.rows[0]); // default sort released desc => newest first
 }
+
+#[test]
+fn extras_hidden_unless_revealed() {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_a.jsonl");
+    let (ds, _) = compile(&p, None, &Options { source_date: 20260701, ..Default::default() }).unwrap();
+    let ix = SearchIndex::build(&ds);
+    let count = |q: &str| ix.search(&coqc_format::parse::parse(q).unwrap()).total;
+    let hidden = count("");
+    let shown = count("include:extras");
+    assert!(shown > hidden, "art_series fixture card must be hidden by default ({hidden} vs {shown})");
+}

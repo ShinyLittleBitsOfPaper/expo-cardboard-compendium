@@ -318,7 +318,7 @@ fn cmd_search(args: &[String]) {
                 }
                 i += 1;
             }
-            Query { expr: coqc::quick::parse(&words.join(" ")).unwrap_or_else(|e| die(&e)), ..Default::default() }
+            coqc_format::parse::parse(&words.join(" ")).unwrap_or_else(|e| die(&e.0))
         }
     };
     if args.iter().any(|a| a == "--cards") {

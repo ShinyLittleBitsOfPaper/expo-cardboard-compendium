@@ -34,16 +34,18 @@ struct P {
     dir: Option<bool>,
     unique: Unique,
     prefer: Prefer,
+    extras: bool,
 }
 
 pub fn parse(q: &str) -> R<Query> {
-    let mut p = P { c: q.chars().collect(), i: 0, order: None, dir: None, unique: Unique::Cards, prefer: Prefer::Newest };
+    let mut p = P { c: q.chars().collect(), i: 0, order: None, dir: None, unique: Unique::Cards, prefer: Prefer::Newest, extras: false };
     let expr = p.or()?;
     p.ws();
     if p.i < p.c.len() {
         return err("unbalanced ')'");
     }
-    let mut out = Query { expr, unique: p.unique, prefer: p.prefer, ..Default::default() };
+    let reveals = expr.as_ref().is_some_and(names_type_or_set);
+    let mut out = Query { expr, unique: p.unique, prefer: p.prefer, include_extras: p.extras || reveals, ..Default::default() };
     if let Some(f) = p.order {
         let desc = p.dir.unwrap_or(matches!(f, SortField::Released));
         out.sort = vec![SortKey { field: f, desc }];
@@ -261,9 +263,22 @@ impl P {
                 };
                 return Ok(None);
             }
-            "include" if v.eq_ignore_ascii_case("extras") => return Ok(None), // extras hiding not implemented yet
+            "include" if v.eq_ignore_ascii_case("extras") => {
+                self.extras = true;
+                return Ok(None);
+            }
             other => return err(format!("unsupported keyword: {other}")),
         }))
+    }
+}
+
+/// Scryfall shows hidden extras when the query names a type or a set.
+fn names_type_or_set(e: &Expr) -> bool {
+    match e {
+        Expr::Type(_) | Expr::Set(_) => true,
+        Expr::And(v) | Expr::Or(v) => v.iter().any(names_type_or_set),
+        Expr::Not(x) => names_type_or_set(x),
+        _ => false,
     }
 }
 
@@ -333,6 +348,9 @@ mod tests {
         assert_eq!(q.unique, Unique::Cards);
         assert_eq!(q.sort[0], SortKey { field: SortField::Mv, desc: true });
         assert!(parse("").unwrap().expr.is_none());
+        assert!(!parse("bolt").unwrap().include_extras);
+        assert!(parse("bolt include:extras").unwrap().include_extras);
+        assert!(parse("t:scheme").unwrap().include_extras && parse("s:mh2").unwrap().include_extras);
         assert!(parse("is:foil").is_err());
         assert!(parse("(a").is_err());
         assert!(parse("a)").is_err());

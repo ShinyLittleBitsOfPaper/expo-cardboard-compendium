@@ -130,6 +130,10 @@ pub struct Query {
     pub sort: Vec<SortKey>,
     #[serde(default)]
     pub unique: Unique,
+    /// Reveal vanguard/plane/scheme/phenomenon, memorabilia and funny-set cards (Scryfall hides them unless
+    /// `include:extras`, or the query names a type or set).
+    #[serde(default)]
+    pub include_extras: bool,
     #[serde(default)]
     pub prefer: Prefer,
     #[serde(default)]
@@ -189,6 +193,13 @@ fn expand_tilde(parts: &[&str], variants: &[String]) -> Vec<String> {
     out
 }
 
+/// `"set_type":"<v>"` out of a printing's residual JSON text (no full parse; values are plain ASCII words).
+fn json_str_field_set_type(extra: &str) -> Option<&str> {
+    let i = extra.find("\"set_type\":\"")? + 12;
+    let rest = &extra[i..];
+    Some(&rest[..rest.find('"')?])
+}
+
 /// Name key: `fold` with apostrophes and commas removed ("krrik son" finds "K'rrik, Son of Yawgmoth", as on Scryfall).
 pub fn fold_name(s: &str) -> String {
     fold(s).chars().filter(|c| !matches!(c, '\'' | '’' | ',')).collect()
@@ -239,6 +250,11 @@ impl Bits {
     }
     fn or(&mut self, o: &Bits) {
         self.w.iter_mut().zip(&o.w).for_each(|(a, b)| *a |= *b);
+    }
+    fn clear(&mut self, o: &Bits) {
+        for (a, b) in self.w.iter_mut().zip(&o.w) {
+            *a &= !*b;
+        }
     }
     fn not_within(&mut self, universe: &Bits) {
         self.w.iter_mut().zip(&universe.w).for_each(|(a, u)| *a = !*a & *u);
@@ -464,6 +480,8 @@ pub struct SearchIndex {
     p_released: Vec<u32>,
     rarities: Vec<String>,
     live_p: Bits,
+    /// printings Scryfall hides by default (see `Query::include_extras`)
+    hidden_p: Bits,
 }
 
 fn mask_from_json(v: &serde_json::Value) -> Option<u8> {
@@ -575,7 +593,9 @@ impl SearchIndex {
             p_released: Vec::new(),
             rarities: ds.meta.rarities.values().iter().map(|r| r.to_string()).collect(),
             live_p: Bits::new(ds.printings.len()),
+            hidden_p: Bits::new(ds.printings.len()),
         };
+        let layouts = ds.meta.layouts.values();
         for o in &ds.oracle {
             s.o_live.push(!o.tombstone);
             let name = o.name.clone().unwrap_or_default();
@@ -603,6 +623,11 @@ impl SearchIndex {
             s.p_live.push(!p.tombstone);
             if !p.tombstone {
                 s.live_p.set(i);
+            }
+            let layout = p.layout.and_then(|l| layouts.get(l as usize)).map(|x| x.as_str());
+            let set_type = p.extra.as_deref().and_then(json_str_field_set_type);
+            if matches!(layout, Some("vanguard" | "planar" | "scheme" | "phenomenon" | "art_series")) || matches!(set_type, Some("memorabilia" | "funny")) {
+                s.hidden_p.set(i);
             }
             s.p_set.push(p.set_code.as_deref().map(fold).unwrap_or_default());
             s.p_cn.push(p.collector_number.as_deref().map(fold).unwrap_or_default());
@@ -793,6 +818,10 @@ impl SearchIndex {
             }
             None => self.live_p.clone(),
         };
+        let mut hits = hits;
+        if !q.include_extras {
+            hits.clear(&self.hidden_p);
+        }
         let mut rows: Vec<u32> = hits.ones().map(|i| i as u32).collect();
         if q.unique == Unique::Cards {
             // one printing per card, chosen by `prefer` (ties: later/earlier row), before sorting
