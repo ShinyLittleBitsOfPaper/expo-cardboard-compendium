@@ -169,6 +169,26 @@ fn fold_char(c: char, out: &mut String) {
     }
 }
 
+/// Generic referents modern Oracle text uses instead of the card name ("This land enters tapped.").
+/// Verified on Scryfall: `o:"~ enters tapped"` matches such cards.
+const THIS_WORDS: &[&str] = &[
+    "creature", "land", "artifact", "enchantment", "permanent", "planeswalker", "battle", "spell", "card", "vehicle",
+    "saga", "aura", "equipment", "class", "token", "attraction", "case", "room", "siege", "background", "contraption",
+    "omen", "spacecraft", "planet", "emblem", "dungeon",
+];
+
+/// Cartesian substitution of every `~` (the gaps between `parts`) with each variant.
+fn expand_tilde(parts: &[&str], variants: &[String]) -> Vec<String> {
+    let mut out = vec![parts[0].to_string()];
+    for p in &parts[1..] {
+        out = out.iter().flat_map(|o| variants.iter().map(move |v| format!("{o}{v}{p}"))).collect();
+        if out.len() > 20_000 {
+            break;
+        }
+    }
+    out
+}
+
 /// Name key: `fold` with apostrophes and commas removed ("krrik son" finds "K'rrik, Son of Yawgmoth", as on Scryfall).
 pub fn fold_name(s: &str) -> String {
     fold(s).chars().filter(|c| !matches!(c, '\'' | '’' | ',')).collect()
@@ -723,7 +743,7 @@ impl SearchIndex {
     }
 
     /// Oracle rows whose `arena` text contains `q`; each `~` stands for the card's own name (full name, a face
-    /// name, or the part before the first comma, since oracle text abbreviates legendary names).
+    /// name, or the part before the first comma) or a generic referent such as "this land".
     fn text_find(&self, arena: &Arena, q: &str) -> Vec<u32> {
         let q = fold(q);
         if !q.contains('~') {
@@ -740,17 +760,17 @@ impl SearchIndex {
         cand.into_iter()
             .filter(|&i| {
                 let name = self.names.get(i as usize);
-                let mut variants: Vec<&str> = vec![name];
+                let mut variants: Vec<String> = vec![name.to_string()];
                 for f in name.split(" // ") {
-                    variants.push(f);
+                    variants.push(f.to_string());
                     if let Some((short, _)) = f.split_once(',') {
-                        variants.push(short);
+                        variants.push(short.to_string());
                     }
                 }
+                variants.extend(THIS_WORDS.iter().map(|w| format!("this {w}")));
                 let text = arena.get(i as usize);
-                variants.iter().any(|v| text.contains(&parts.join(v)))
+                expand_tilde(&parts, &variants).iter().any(|n| text.contains(n.as_str()))
             })
-            .map(|i| i)
             .collect()
     }
 
@@ -848,5 +868,17 @@ fn num_cmp(a: f64, b: f64, op: Op) -> bool {
         Op::Le => a <= b,
         Op::Gt => a > b,
         Op::Ge => a >= b,
+    }
+}
+
+#[cfg(test)]
+mod tilde_tests {
+    use super::*;
+    #[test]
+    fn expands_names_and_this_referents() {
+        let v: Vec<String> = vec!["azorius guildgate".into(), "this land".into()];
+        let n = expand_tilde(&["", " enters tapped"], &v);
+        assert!(n.contains(&"this land enters tapped".to_string()) && n.contains(&"azorius guildgate enters tapped".to_string()));
+        assert_eq!(expand_tilde(&["a ", " b ", " c"], &v).len(), 4);
     }
 }

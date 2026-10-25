@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- 2026-10-25, 0.0.1-18: `~` in `o:`/`fo:` also matches generic referents ("this land", "this creature", ...), per Scryfall's `o:"~ enters tapped"` results (762 cards). Real-data check pending: `coqc search 'o:"~ enters tapped"'` unique cards vs 762.
+
 ### Added
 - 2026-10-24, 0.0.1-17: Scryfall defaults and text semantics. Parser default is `unique:cards`, `prefer:newest` (new `Query.prefer`, picks the printing before sorting), alphabetical order; `prefer:oldest`. Names ignore `'`, `’`, `,` (separate normalised name arena). `o:` now excludes reminder text, new `fo:`/`fulloracle` leaf `fulloracle`; text trigrams cover both texts. `~` in oracle queries = the card's own name (full/face/pre-comma). Tests: 30.
 

@@ -55,7 +55,7 @@ others asc (rarity default unverified).
 Defaults (as Scryfall): `unique:cards`, `prefer:newest`, alphabetical order. `prefer:oldest` supported; others (usd-low, promo, ...) TODO.
 Name matching ignores `'`, `’` and `,` (confirmed: "krrik son" finds "K'rrik, Son of Yawgmoth"); other punctuation unverified.
 `o:` ignores reminder text (parenthesised spans), `fo:` includes it. `~` = the card's own name (full name, a face name, or the
-part before the first comma); unverified whether Scryfall's `~` also matches templating like "this creature".
+part before the first comma) or generic "this land"/"this creature"/... (verified: Scryfall's `o:"~ enters tapped"` returns 762 cards, mostly "This land enters tapped"). The generic-word list is a fixed approximation.
 Parser TODO: `~` in oracle text, `m:`/`mana:`, `is:`/`has:`/`f:`/`in:`/`b:`/`st:`/`lang:`, price keys, `a:`/`ft:`/`wm:`,
 `unique:art`, `prefer:`, regex, `include:extras` + default hiding of funny/vanguard/memorabilia, `keyword:`, `pow/tou/loy`.
 
