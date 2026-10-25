@@ -58,6 +58,8 @@ fn cmd_compile(args: &[String]) {
     let opts = Options {
         rebase: args.iter().any(|a| a == "--rebase"),
         keep_prices: args.iter().any(|a| a == "--keep-prices"),
+        skip_digital: args.iter().any(|a| a == "--skip-digital"),
+        skip_art_series: args.iter().any(|a| a == "--skip-art-series"),
         progress: args.iter().any(|a| a == "--progress"),
         row_order: match flag_value(args, "--row-order").as_deref() {
             None | Some("set") => RowOrder::Set,

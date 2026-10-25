@@ -70,3 +70,6 @@ scripts/ingest-bundle.sh ~/Downloads/<bundle>.tar.gz [--prune]
 uncommitted changes, copies the bundle over the tree, lists tracked files the bundle dropped
 (`--prune` deletes them) and leaves your ignored and untracked files alone. Commit before ingesting
 so the bundle's changes show up as one `git diff`. Needs GNU tar.
+
+
+Compile scope: all printings with an oracle_id, including digital-only and art_series (`--skip-digital` / `--skip-art-series` to drop them). Search must hide extras/funny/memorabilia by default like Scryfall (TODO).

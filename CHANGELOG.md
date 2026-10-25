@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- 2026-10-25, 0.0.1-19: compile now includes digital-only and art_series printings by default (Scryfall search includes them; `o:"~ enters tapped"` was 5 short because Alchemy cards like Potential Horizon were skipped). New flags `--skip-digital`, `--skip-art-series` (Options `skip_digital`/`skip_art_series`); `verify` tolerates datasets compiled with skips. Expect ~11.9k appended rows (9,168 digital + 2,775 art_series) in the next patch from a previous release (one-time, size unmeasured). Default hiding of extras at search time still TODO. Tests: 31.
+
 ### Fixed
 - 2026-10-25, 0.0.1-18: `~` in `o:`/`fo:` also matches generic referents ("this land", "this creature", ...), per Scryfall's `o:"~ enters tapped"` results (762 cards). Real-data check pending: `coqc search 'o:"~ enters tapped"'` unique cards vs 762.
 

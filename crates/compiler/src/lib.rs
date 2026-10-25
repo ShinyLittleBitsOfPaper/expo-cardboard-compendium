@@ -44,6 +44,10 @@ pub struct Options {
     pub keep_prices: bool,
     /// Print progress lines to stderr while compiling.
     pub progress: bool,
+    /// Leave out digital-only printings (Arena/MTGO/Alchemy). Default: included, as Scryfall search includes them.
+    pub skip_digital: bool,
+    /// Leave out art_series (memorabilia) cards. Default: included (hidden by default at search time).
+    pub skip_art_series: bool,
 }
 
 struct Progress {
@@ -195,12 +199,12 @@ fn oracle_id_of(card: &Obj) -> Option<Id> {
         .and_then(parse_uuid)
 }
 
-fn accept(card: &Obj) -> Result<Accepted, Skip> {
+fn accept(card: &Obj, opts: &Options) -> Result<Accepted, Skip> {
     let id = card.get("id").and_then(Value::as_str).and_then(parse_uuid).ok_or(Skip::BadId)?;
-    if card.get("digital").and_then(Value::as_bool) == Some(true) {
+    if opts.skip_digital && card.get("digital").and_then(Value::as_bool) == Some(true) {
         return Err(Skip::Digital);
     }
-    if card.get("layout").and_then(Value::as_str) == Some("art_series") {
+    if opts.skip_art_series && card.get("layout").and_then(Value::as_str) == Some("art_series") {
         return Err(Skip::ArtSeries);
     }
     let oracle_id = oracle_id_of(card).ok_or(Skip::NoOracleId)?;
@@ -744,7 +748,7 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
     let (lines, errs) = for_each_card(input, |mut card| {
         seen += 1;
         prog.tick("pass 1/2 reading", seen, None);
-        let a = match accept(&card) {
+        let a = match accept(&card, opts) {
             Ok(a) => a,
             Err(Skip::Digital) => return stats.skipped_digital += 1,
             Err(Skip::ArtSeries) => return stats.skipped_art_series += 1,
@@ -858,7 +862,7 @@ pub fn compile(input: &Path, prev: Option<&Dataset>, opts: &Options) -> Result<(
     let total = printing_ids.len() as u64;
     prog.say(&format!("pass 2/2: building and verifying {total} printings"));
     for_each_card(input, |mut card| {
-        let Ok(a) = accept(&card) else { return };
+        let Ok(a) = accept(&card, opts) else { return };
         for k in &drop_keys {
             card.remove(*k);
         }
@@ -911,8 +915,13 @@ pub fn verify(ds: &Dataset, input: &Path) -> Result<(u64, u64), String> {
     let (mut checked, mut bad) = (0u64, 0u64);
     let mut seen: BTreeSet<Id> = BTreeSet::new();
     for_each_card(input, |mut card| {
-        let Ok(a) = accept(&card) else { return };
+        let Ok(a) = accept(&card, &Options::default()) else { return };
         if !seen.insert(a.id) {
+            return;
+        }
+        // datasets compiled with --skip-digital / --skip-art-series legitimately lack these
+        let optional = card.get("digital").and_then(Value::as_bool) == Some(true) || card.get("layout").and_then(Value::as_str) == Some("art_series");
+        if optional && !pmap.contains_key(&a.id) {
             return;
         }
         for k in &ds.meta.dropped_keys {

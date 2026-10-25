@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 fn setup() -> (coqc_format::Dataset, SearchIndex) {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_a.jsonl");
-    let (ds, _) = compile(&p, None, &Options { source_date: 20260701, ..Default::default() }).unwrap();
+    let (ds, _) = compile(&p, None, &Options { source_date: 20260701, skip_digital: true, skip_art_series: true, ..Default::default() }).unwrap();
     let ix = SearchIndex::build(&ds);
     (ds, ix)
 }

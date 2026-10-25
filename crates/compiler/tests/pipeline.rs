@@ -7,7 +7,7 @@ fn fx(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
 }
 fn opts() -> Options {
-    Options { source_date: 20260701, ..Default::default() }
+    Options { source_date: 20260701, skip_digital: true, skip_art_series: true, ..Default::default() }
 }
 fn id(n: u32) -> Id {
     parse_uuid(&format!("00000000-0000-4000-8000-{n:012}")).unwrap()
@@ -228,4 +228,16 @@ fn patch_apply_reproduces_the_new_file_exactly() {
     // a different epoch cannot be patched
     let (c, _) = compile(&fx("sample_b.jsonl"), Some(&a), &Options { rebase: true, ..opts() }).unwrap();
     assert!(coqc::patch::make_patch(&ab, &write(&c).unwrap().0).is_err());
+}
+
+#[test]
+fn digital_and_art_series_included_by_default() {
+    let o = Options { source_date: 20260701, ..Default::default() };
+    let (ds, st) = compile(&fx("sample_a.jsonl"), None, &o).unwrap();
+    assert_eq!((st.skipped_digital, st.skipped_art_series), (0, 0));
+    assert_eq!(st.printings, 12);
+    assert_eq!(verify(&ds, &fx("sample_a.jsonl")).unwrap(), (12, 0));
+    // a dataset compiled with the skips still verifies against the full input
+    let (skipped, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
+    assert_eq!(verify(&skipped, &fx("sample_a.jsonl")).unwrap(), (10, 0));
 }
