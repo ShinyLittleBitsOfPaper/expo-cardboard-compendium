@@ -463,6 +463,7 @@ pub struct SearchIndex {
     o_live: Vec<bool>,
     names: Arena,   // fold(name): sort, `~` variants
     names_n: Arena, // fold_name(name): name search / exact
+    names_s: Arena, // letters and digits only: sort key (Scryfall ignores spaces, hyphens, quotes, apostrophes when ordering)
     types: Arena,
     texts: Arena,      // reminder text stripped (o:)
     full_texts: Arena, // full text (fo:)
@@ -577,6 +578,7 @@ impl SearchIndex {
             o_live: Vec::with_capacity(no),
             names: Arena::default(),
             names_n: Arena::default(),
+            names_s: Arena::default(),
             types: Arena::default(),
             texts: Arena::default(),
             full_texts: Arena::default(),
@@ -602,6 +604,7 @@ impl SearchIndex {
             let name = o.name.clone().unwrap_or_default();
             s.names.push(&fold(&name));
             s.names_n.push(&fold_name(&name));
+            s.names_s.push(&fold(&name).chars().filter(|c| c.is_alphanumeric()).collect::<String>());
             s.types.push(&fold(&join_faces(&o.type_line, &o.faces, |f| &f.type_line)));
             let full = join_faces(&o.oracle_text, &o.faces, |f| &f.oracle_text);
             s.texts.push(&fold(&strip_reminder(&full)));
@@ -849,7 +852,7 @@ impl SearchIndex {
                 let (oa, ob) = (self.p_oracle[a] as usize, self.p_oracle[b] as usize);
                 let ord = match k.field {
                     SortField::Released => self.p_released[a].cmp(&self.p_released[b]),
-                    SortField::Name => self.names.get(oa).cmp(self.names.get(ob)),
+                    SortField::Name => self.names_s.get(oa).cmp(self.names_s.get(ob)),
                     SortField::Mv => self.o_mv[oa].unwrap_or(0.0).total_cmp(&self.o_mv[ob].unwrap_or(0.0)),
                     SortField::Rarity => self.rarity_key(a).cmp(&self.rarity_key(b)),
                 };

@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- 2026-10-25, 0.0.1-22: name sort key ignores everything but letters/digits, as on Scryfall (verified on results page 6: "Jwari…" before "Jwar Isle…", "Lake-town" after "Lakeside…", `"Lifetime" Pass Holder` between Library and Lindblum). Tests: 32.
+
+### Fixed
 - 2026-10-25, 0.0.1-21: default hiding corrected from real Scryfall results: funny sets (Un-sets) are visible; hidden are vanguard/planar/scheme/phenomenon/art_series layouts, set_type memorabilia, and promo_type `playtest` cards. Expected `o:"~ enters tapped" --cards` = 762 (757 + 5 Un-set cards). Real-data check pending. Tests: 32.
 
 ### Added
