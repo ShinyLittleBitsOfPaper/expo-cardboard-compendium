@@ -22,6 +22,9 @@ USAGE:
   coqc search  <dataset.coqd> <query words...> [--plan '<json Query>'] [--cards] [--limit N] [--offset N]
                                                    run a query (quick syntax: t:instant c>=r mv<=2 -o:flying \"bolt\")
   coqc index-stats <dataset.coqd>                  derived search index: build time, sizes, stop-grams
+  coqc index-build <dataset.coqd> -o <out.coqs>    serialize the search index (compile-time artifact); sizes + load check
+  coqc index-diff  <old> <new> [-o <delta.coqsd>]  index delta between two releases (.coqd or .coqs); replay-verified
+  coqc index-apply <old.coqs> <delta.coqsd> -o <new.coqs>   replay a delta (hash-verified)
   coqc idmap   <AllIdentifiers.json> -o <idmap.coqm>   MTGJSON uuid -> Scryfall id map (refresh rarely)
   coqc prices  <AllPricesToday.json> --cards <cards.coqd> --idmap <idmap.coqm> -o <prices.coqr>
   coqc prices-patch <old.coqr> <new.coqr> -o <p.coqx>  /  coqc prices-apply <old.coqr> <p.coqx> -o <new.coqr>
@@ -301,6 +304,94 @@ fn cmd_index_stats(args: &[String]) {
     }
 }
 
+fn index_file(path: &str) -> Vec<u8> {
+    // returns the .coqs bytes: read as-is, or built from a .coqd
+    let bytes = std::fs::read(path).unwrap_or_else(|e| die(&format!("{path}: {e}")));
+    if bytes.starts_with(b"COQS") {
+        return bytes;
+    }
+    let ds = read(&bytes).unwrap_or_else(|e| die(&format!("{path}: {e}")));
+    let ix = coqc_format::search::SearchIndex::build(&ds);
+    coqc_format::search::coqs::serialize(&ix, &Sha256::digest(&bytes).into())
+}
+
+fn cmd_index_build(args: &[String]) {
+    use coqc_format::search::{coqs, SearchIndex};
+    let path = args.first().unwrap_or_else(|| die("missing dataset"));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <out.coqs>"));
+    let (bytes, ds) = load(Path::new(path));
+    let t = Instant::now();
+    let ix = SearchIndex::build(&ds);
+    println!("index build: {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+    let file = coqs::serialize(&ix, &Sha256::digest(&bytes).into());
+    println!("{:<16} {:>12} {:>12}", "section", "raw", "zstd");
+    let (mut r, mut z) = (0, 0);
+    for s in coqs::section_sizes(&ix) {
+        println!("{:<16} {:>12} {:>12}", s.name, mb(s.raw as u64), mb(s.zstd as u64));
+        r += s.raw;
+        z += s.zstd;
+    }
+    let whole = coqs::compress(&file).len();
+    println!("{:<16} {:>12} {:>12}   (file {}, whole-file zstd {}; dataset {})", "total", mb(r as u64), mb(z as u64), mb(file.len() as u64), mb(whole as u64), mb(bytes.len() as u64));
+    let t = Instant::now();
+    let (back, dsha) = coqs::deserialize(&file).unwrap_or_else(|e| die(&format!("reload failed: {e}")));
+    println!("reload (owned copy): {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+    if coqs::serialize(&back, &dsha) != file {
+        die("round trip differs");
+    }
+    let (mut agree, mut total) = (0, 0);
+    for q in ["bolt", "t:creature", "o:flying", "o:\"draw a card\"", "o:\"enters the battlefield\"", "o:ab", "c>=rg mv<=2", "o:destroy t:artifact"] {
+        let query = coqc_format::parse::parse(q).unwrap_or_else(|e| die(&format!("{q}: {e}")));
+        total += 1;
+        agree += (ix.search(&query).rows == back.search(&query).rows) as usize;
+    }
+    println!("round trip: byte-identical; {agree}/{total} sample queries agree");
+    if agree != total {
+        die("query mismatch after reload");
+    }
+    std::fs::write(&out, &file).unwrap_or_else(|e| die(&e.to_string()));
+    println!("wrote {out}");
+}
+
+fn cmd_index_diff(args: &[String]) {
+    use coqc_format::search::coqs;
+    if args.len() < 2 {
+        die("usage: coqc index-diff <old> <new> [-o delta]");
+    }
+    let old = index_file(&args[0]);
+    let new = index_file(&args[1]);
+    let t = Instant::now();
+    let (delta, info) = coqs::make_delta(&old, &new).unwrap_or_else(|e| die(&e.to_string()));
+    println!("delta built in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+    println!("{:<16} {:>9} {:>12} {:>12}", "table", "changed", "raw", "zstd");
+    for tb in &info.tables {
+        println!("{:<16} {:>9} {:>12} {:>12}", tb.name, tb.changed, mb(tb.raw as u64), mb(tb.zstd as u64));
+    }
+    println!("trigram postings: {} appended, {} new grams, {} replaced, {} removed", info.tri_appended, info.tri_new, info.tri_replaced, info.tri_removed);
+    let again = coqs::apply_delta(&old, &delta).unwrap_or_else(|e| die(&format!("replay failed: {e}")));
+    if again != new {
+        die("replay differs from target");
+    }
+    println!("delta: raw {} -> {} (whole delta zstd); replay reproduces the new index byte-identically", mb(info.raw as u64), mb(delta.len() as u64));
+    println!("for scale: new index file {} (zstd {}), old {}", mb(new.len() as u64), mb(coqs::compress(&new).len() as u64), mb(old.len() as u64));
+    if let Some(out) = flag_value(args, "-o") {
+        std::fs::write(&out, &delta).unwrap_or_else(|e| die(&e.to_string()));
+        println!("wrote {out}");
+    }
+}
+
+fn cmd_index_apply(args: &[String]) {
+    use coqc_format::search::coqs;
+    if args.len() < 2 {
+        die("usage: coqc index-apply <old.coqs> <delta> -o <new.coqs>");
+    }
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o"));
+    let (old, delta) = (rd(&args[0]), rd(&args[1]));
+    let n = coqs::apply_delta(&old, &delta).unwrap_or_else(|e| die(&e.to_string()));
+    std::fs::write(&out, &n).unwrap_or_else(|e| die(&e.to_string()));
+    println!("applied: {out} ({}), hash verified", mb(n.len() as u64));
+}
+
 fn cmd_search(args: &[String]) {
     use coqc_format::search::{Query, SearchIndex, Unique};
     let path = args.first().unwrap_or_else(|| die("missing dataset"));
@@ -437,6 +528,9 @@ fn main() {
         "price" => cmd_price(rest),
         "search" => cmd_search(rest),
         "index-stats" => cmd_index_stats(rest),
+        "index-build" => cmd_index_build(rest),
+        "index-diff" => cmd_index_diff(rest),
+        "index-apply" => cmd_index_apply(rest),
         "patch" => cmd_patch(rest),
         "apply" => cmd_apply(rest),
         _ => {

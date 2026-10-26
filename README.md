@@ -42,7 +42,7 @@ Keeps `data/daily/releases/cards-YYYYMMDDHHMM.coqd` and `patches/<old>-to-<new>.
 
 - `crates/format`: `coqc-format` (records, container, card JSON reconstruction)
 - `crates/compiler`: `coqc` (library + CLI)
-- `crates/format/src/search.rs`: derived search index + query plan (docs/search.md)
+- `crates/format/src/search.rs`: search index + query plan; `search/coqs.rs`: `.coqs` serialization + deltas (docs/search.md)
 - `crates/format/src/prices.rs`, `crates/compiler/src/prices.rs`: price dataset (docs/prices.md); `scripts/daily-prices.sh`
 - `scripts/fetch-bulk.sh`: bulk download with Scryfall-friendly headers; skips when updated_at is unchanged
 - `docs/format.md`: file format spec; `docs/phase0.md`: findings, open questions, next steps

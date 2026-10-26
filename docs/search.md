@@ -59,11 +59,16 @@ part before the first comma) or generic "this land"/"this creature"/... (verifie
 Parser TODO: `~` in oracle text, `m:`/`mana:`, `is:`/`has:`/`f:`/`in:`/`b:`/`st:`/`lang:`, price keys, `a:`/`ft:`/`wm:`,
 `unique:art`, `prefer:`, regex, `include:extras` + default hiding of funny/vanguard/memorabilia, `keyword:`, `pow/tou/loy`.
 
-## Compile-time index (proposed; not implemented)
-Build the search index in the compiler and ship it as a separate artifact (`.coqs`) keyed to the dataset hash, so devices
-only map it (no ~0.4-1+ s build, no extra RAM). Cost: the index must be refreshed with each dataset refresh. Because row ids are
-stable and append-only, trigram posting lists change mostly at the tail; an index patch = per-gram add/remove row lists
-(+ appended per-row columns), expected small. Plan: serialize `SearchIndex` (columns + stop grams + postings), measure
-full size and a real 12 h index delta, then decide delta vs full replace.
+## Compile-time index (`.coqs`, implemented in -23; real-data numbers pending)
+Code: `crates/format/src/search/coqs.rs`. The compiler serializes `SearchIndex` next to the dataset; the header holds the
+SHA-256 of the .coqd it was built from. Sections are raw, 8-byte aligned fixed-width arrays (mappable): meta, six oracle text
+arenas (names, names_n, names_s, types, texts, full_texts), oracle columns, printing columns, set, cn, name/text trigram tables
+(keys, offsets, stop-grams, postings). Distribution: zstd the file (or per section).
+- `coqc index-build x.coqd -o x.coqs` prints per-section raw/zstd sizes, whole-file zstd, reload time, a byte-identical round-trip check and sample-query agreement.
+- Delta: `coqc index-diff old new [-o d.coqsd]` (inputs .coqd or .coqs). Row tables carry changed/appended rows; trigram tables carry
+  stop-gram add/remove and per-gram `append` (new list extends the old bytes), `replace`, `new`, `remove`. `index-apply` replays it;
+  the result must hash to the target. Run on two consecutive releases (e.g. `scripts/daily.sh --force` ~12 h apart) for the real delta.
+- Open: a mapped (zero-copy) reader; today `deserialize` builds an owned `SearchIndex`. Arenas dominate size (texts and full_texts
+  duplicate each other); if the download matters, derive `full_texts` from `texts` + reminder spans instead of storing both.
 
 Default hiding (Scryfall): layout vanguard/planar/scheme/phenomenon/art_series, set_type memorabilia and promo_types `playtest` (cmb1/cmb2/unk) are hidden; other funny sets (ugl, unh, unf, ...) are visible, verified against Scryfall unless `include:extras` or the query contains a `t:` or `s:`/`e:` term (anywhere, approximation). Tokens/emblems not hidden yet (unverified).

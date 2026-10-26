@@ -128,3 +128,36 @@ fn extras_hidden_unless_revealed() {
     let shown = count("include:extras");
     assert!(shown > hidden, "art_series fixture card must be hidden by default ({hidden} vs {shown})");
 }
+
+#[test]
+fn coqs_round_trip_and_delta() {
+    use coqc_format::search::coqs;
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let opts = Options { source_date: 20260701, ..Default::default() };
+    let (a, _) = compile(&dir.join("sample_a.jsonl"), None, &opts).unwrap();
+    let ia = SearchIndex::build(&a);
+    let fa = coqs::serialize(&ia, &[7u8; 32]);
+    let (back, sha) = coqs::deserialize(&fa).unwrap();
+    assert_eq!(sha, [7u8; 32]);
+    assert_eq!(coqs::serialize(&back, &sha), fa);
+    for q in ["bolt", "o:\"3 damage\"", "t:creature -o:damage", "c>=ur", "mv<=1", "s:m11", "include:extras", "!\"fire // ice\""] {
+        let query = coqc_format::parse::parse(q).unwrap();
+        assert_eq!(ia.search(&query).rows, back.search(&query).rows, "{q}");
+    }
+    // corrupt input is rejected, not a panic
+    assert!(coqs::deserialize(&fa[..fa.len() / 2]).is_err());
+    assert!(coqs::deserialize(b"nope").is_err());
+
+    // delta: next-day dataset built on top of the first (stable rows, appended cards)
+    let b_path = dir.join("sample_b.jsonl");
+    if !b_path.exists() {
+        return;
+    }
+    let (b, _) = compile(&b_path, Some(&a), &opts).unwrap();
+    let fb = coqs::serialize(&SearchIndex::build(&b), &[8u8; 32]);
+    let (delta, info) = coqs::make_delta(&fa, &fb).unwrap();
+    assert!(!info.tables.is_empty());
+    assert_eq!(coqs::apply_delta(&fa, &delta).unwrap(), fb);
+    // wrong base is refused
+    assert!(coqs::apply_delta(&fb, &delta).is_err());
+}

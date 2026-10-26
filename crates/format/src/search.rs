@@ -11,6 +11,8 @@ use crate::types::OracleRecord;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
+pub mod coqs;
+
 // ------------------------------------------------------------------ plan ---
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
