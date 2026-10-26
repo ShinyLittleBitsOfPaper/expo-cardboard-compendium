@@ -5,8 +5,8 @@ cd "$(dirname "$0")/.."
 M=modules/expo-cardboard-compendium
 case "${1:-}" in
   android)
-    rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
-    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o $M/android/src/main/jniLibs build --release -p coqc-engine
+    rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -o $M/android/src/main/jniLibs build --release -p coqc-engine
     ;;
   ios)
     rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios

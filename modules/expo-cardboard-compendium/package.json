@@ -12,6 +12,7 @@
   "types": "src/index.ts",
   "peerDependencies": {
     "expo": "*",
+    "expo-modules-core": "*",
     "react-native": "*"
   },
   "files": [

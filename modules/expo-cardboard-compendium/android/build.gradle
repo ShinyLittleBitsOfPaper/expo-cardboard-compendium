@@ -6,7 +6,13 @@ version = '0.0.1'
 
 android {
   namespace "expo.modules.cardboardcompendium"
-  defaultConfig { externalNativeBuild { cmake { arguments "-DANDROID_STL=none" } } }
+  defaultConfig {
+    // expo-module-gradle-plugin's Maven publication step requires versionName
+    // ("'android.defaultConfig.versionName' is not defined" otherwise).
+    versionCode 1
+    versionName "0.0.1"
+    externalNativeBuild { cmake { arguments "-DANDROID_STL=none" } }
+  }
   externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt" } }
   // libcoqe.so per ABI, produced by scripts/build-native.sh
   sourceSets { main { jniLibs.srcDirs = ['src/main/jniLibs'] } }
