@@ -29,4 +29,9 @@ Notes
   Version = tag without the `v`.
 - slbop pins the release asset URL as the dependency (`"expo-cardboard-compendium": "https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/expo-cardboard-compendium-X.Y.Z.tgz"`).
   A private repo cannot serve that URL anonymously; then publish to GitHub Packages (npm registry) instead, same tarball.
+- iOS is optional for now: its job is `continue-on-error` and the package job runs after Android alone. A package built without the
+  xcframework works on Android only (the podspec expects `libcoqe.xcframework`); rerun the workflow when a macOS runner is available.
+- First real run (2026-10-26): `test` and `android` passed; the Android libs checked out: 3 ABIs, export `coqe_call`/`coqe_free`,
+  depend only on libc/libdl, 64-bit slices are 16 KB aligned. `ios` could not get a macOS runner. Node 20 deprecation notices
+  (actions/checkout@v4, upload-artifact@v4) are warnings only.
 - Compiled libraries are gitignored; local development uses `scripts/build-native.sh`.

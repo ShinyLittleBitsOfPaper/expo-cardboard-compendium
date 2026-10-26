@@ -35,8 +35,11 @@ jobs:
           path: modules/expo-cardboard-compendium/android/src/main/jniLibs
 
   ios:
+    # Optional for now: macOS arm64 runners are capacity-constrained and the job can fail to be acquired.
+    # The package job still runs (without the xcframework) when this fails or is skipped.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: test
+    continue-on-error: true
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +53,8 @@ jobs:
 
   package:
     needs: [android, ios]
+    # run when android succeeded, even if ios failed or was cancelled by capacity problems
+    if: ${{ !cancelled() && needs.android.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -60,6 +65,7 @@ jobs:
           name: jniLibs
           path: modules/expo-cardboard-compendium/android/src/main/jniLibs
       - uses: actions/download-artifact@v4
+        continue-on-error: true # no xcframework when the ios job did not produce one
         with:
           name: xcframework
           path: modules/expo-cardboard-compendium/ios/libcoqe.xcframework
