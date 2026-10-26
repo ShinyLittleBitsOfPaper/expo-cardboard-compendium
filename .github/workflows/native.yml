@@ -75,7 +75,9 @@ jobs:
       - name: Pack (version = tag without the leading v)
         working-directory: modules/expo-cardboard-compendium
         run: |
-          [ "${GITHUB_REF_TYPE}" = "tag" ] && npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+          fi
           npm pack
       - uses: actions/upload-artifact@v4
         with:
