@@ -21,3 +21,12 @@ Notes
   device). A mapped, lazily-decoded reader is the next step if memory is a problem.
 - `modules/expo-scryfall-engine` is a scaffold (TS API, Kotlin + JNI shim, Swift, podspec) and `scripts/build-native.sh` cross-compiles.
   None of it has been built or run: there is no Android/Xcode toolchain here. Expect first-build fixes (Gradle plugin names, CMake paths).
+
+## Release pipeline (`.github/workflows/native.yml`, untested)
+- Every push/PR: `cargo test --workspace`.
+- Tag `vX.Y.Z` (or manual dispatch): build `libcoqe.so` for 3 Android ABIs (cargo-ndk installed with taiki-e/install-action, runner NDK) and
+  `libcoqe.xcframework` (macOS runner), then `npm pack` the module with both inside and attach the `.tgz` to the GitHub Release.
+  Version = tag without the `v`.
+- slbop pins the release asset URL as the dependency (`"expo-scryfall-engine": "https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/expo-scryfall-engine-X.Y.Z.tgz"`).
+  A private repo cannot serve that URL anonymously; then publish to GitHub Packages (npm registry) instead, same tarball.
+- Compiled libraries are gitignored; local development uses `scripts/build-native.sh`.

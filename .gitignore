@@ -19,3 +19,8 @@
 .vscode/
 *.swp
 .env
+
+# built by CI / scripts/build-native.sh
+modules/*/android/src/main/jniLibs/
+modules/*/ios/libcoqe.xcframework/
+modules/*/*.tgz
