@@ -9,6 +9,9 @@
 # Refuses to run with uncommitted changes (so the bundle shows up as a clean `git diff`)
 # unless you pass --force.
 set -euo pipefail
+# Everything below runs inside one { } group so bash parses the whole script before executing it:
+# the bundle may replace this very file, and bash reads scripts incrementally (offsets would shift).
+{
 cd "$(dirname "$0")/.."
 
 bundle=""; PRUNE=0; FORCE=0
@@ -57,3 +60,5 @@ if [ "$in_git" = 1 ]; then
   echo "--- git status ---"; git status --short
 fi
 echo "next: cargo test && cargo build --release"
+}
+exit $?

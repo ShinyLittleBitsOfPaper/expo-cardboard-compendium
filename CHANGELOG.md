@@ -9,6 +9,7 @@
 - 2026-10-25, 0.0.1-23: `.coqs` compile-time search index. `coqc_format::search::coqs`: `serialize`/`deserialize` (13 raw, 8-byte-aligned sections: arenas, columns, trigram tables; header carries the SHA-256 of the source .coqd), `make_delta`/`apply_delta` (row-level changes + per-gram append/replace/new/removed postings + stop-gram sets; SHA-256 replay-verified). CLI `coqc index-build` (per-section raw/zstd sizes, reload check, 8 sample queries), `coqc index-diff old new [-o]` (accepts .coqd or .coqs; replays the delta and checks it), `coqc index-apply`. Synthetic 100k printings: 15.2 MB raw, ~1.8 MB whole-file zstd, build 0.5 s, reload 10 ms; a 25-card day delta 0.31 MB. Not yet run on real data. Tests: 33.
 
 ### Fixed
+- 2026-10-25, 0.0.1-27: `scripts/ingest-bundle.sh` no longer breaks when a bundle replaces the script itself (bash reads scripts incrementally, so a changed length made it resume mid-file: "line 43: syntax error near unexpected token `(`" on the -26 ingest). The whole script now runs inside one `{ }` group. Verified by ingesting a bundle with a different-length copy of itself.
 - 2026-10-25, 0.0.1-22: name sort key ignores everything but letters/digits, as on Scryfall (verified on results page 6: "Jwari…" before "Jwar Isle…", "Lake-town" after "Lakeside…", `"Lifetime" Pass Holder` between Library and Lindblum). Tests: 32.
 
 ### Fixed
