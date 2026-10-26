@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$bundle" ] && [ -f "$bundle" ] || { echo "usage: $0 <bundle.tar.gz> [--prune] [--force]" >&2; exit 2; }
-[ -f Cargo.toml ] || { echo "run from the expo-scryfall-engine repo" >&2; exit 2; }
+[ -f Cargo.toml ] || { echo "run from the expo-cardboard-compendium repo" >&2; exit 2; }
 
 in_git=0; git rev-parse --is-inside-work-tree >/dev/null 2>&1 && in_git=1
 if [ "$in_git" = 1 ] && [ "$FORCE" = 0 ] && [ -n "$(git status --porcelain)" ]; then

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Package the working tree as a bundle to hand to Claude:
-#   bundles/expo-scryfall-engine-<version>-<N>.tar.gz
+#   bundles/expo-cardboard-compendium-<version>-<N>.tar.gz
 #
 #   scripts/package-bundle.sh [--no-bump] [--out DIR]
 #
@@ -26,7 +26,7 @@ version="${seq%-*}"; n="${seq##*-}"
 if [ "$version" != "$cargo_version" ]; then version="$cargo_version"; n=0; fi   # new release restarts at -1
 if [ "$BUMP" = 1 ]; then n=$((n + 1)); fi
 echo "$version-$n" > .bundle-seq
-name="expo-scryfall-engine-$version-$n"
+name="expo-cardboard-compendium-$version-$n"
 
 mkdir -p "$OUT"
 list="$(mktemp)"; trap 'rm -f "$list"' EXIT
@@ -40,6 +40,6 @@ else
     | sed -z 's,^\./,,' > "$list"
 fi
 
-tar --transform 's,^,expo-scryfall-engine/,' --null -T "$list" -czf "$OUT/$name.tar.gz"
+tar --transform 's,^,expo-cardboard-compendium/,' --null -T "$list" -czf "$OUT/$name.tar.gz"
 echo "created $OUT/$name.tar.gz ($(du -h "$OUT/$name.tar.gz" | cut -f1), $(tr -cd '\0' < "$list" | wc -c) files)"
 echo "attach it to your next message and tell me the name: $name"

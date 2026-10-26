@@ -1,9 +1,18 @@
-# expo-scryfall-engine (working name)
+# expo-cardboard-compendium
 
-Compiles Scryfall bulk card data into a compact, block-compressed, **lossless** dataset
-(`.coqd`) that a native engine can query on-device. Phase 0 here: the compiler and format.
-No search index, price dataset, patching, reader/engine or Expo module yet (see
-`docs/phase0.md`). Unofficial; see `NOTICE.md`.
+A Rust toolchain and Expo module for fast, offline, Scryfall-syntax card search on a phone.
+
+- `coqc` compiles Scryfall bulk card data into a compact, lossless dataset (`.coqd`), a search index (`.coqs`),
+  price tables, and small daily patches/deltas for each (see `docs/`).
+- `coqc-engine` (library `coqe`) opens those files, searches, looks up cards and applies updates behind a one-function C ABI.
+- `modules/expo-cardboard-compendium` is the Expo module (TypeScript API, Android, iOS) over that engine. Unbuilt scaffold; see `docs/engine.md`.
+
+Unofficial; see `NOTICE.md`.
+
+**Naming.** *Cardboard Compendium* is the Expo module / repo. The `coq*` names (the file formats, `coqc`, `coqc-format`,
+`coqc-engine`) are deliberately not tied to Magic. The intent is for the format, search engine and module to work with any
+structured JSONL dataset. Today the compiler, the search syntax and the card JSON are Scryfall-specific; generalising them
+(a dataset schema instead of the hard-coded card model) is future work and not designed yet.
 
 ## Quick start
 
@@ -61,7 +70,7 @@ Keeps `data/daily/releases/cards-YYYYMMDDHHMM.coqd` and `patches/<old>-to-<new>.
 ## Exchanging bundles with Claude
 
 ```sh
-scripts/package-bundle.sh                          # -> bundles/expo-scryfall-engine-<ver>-<N>.tar.gz
+scripts/package-bundle.sh                          # -> bundles/expo-cardboard-compendium-<ver>-<N>.tar.gz
 scripts/ingest-bundle.sh ~/Downloads/<bundle>.tar.gz [--prune]
 ```
 

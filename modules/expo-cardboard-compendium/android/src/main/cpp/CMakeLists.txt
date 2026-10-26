@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.18)
+project(coqe_jni C)
+add_library(coqe SHARED IMPORTED)
+set_target_properties(coqe PROPERTIES IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libcoqe.so)
+add_library(coqe_jni SHARED coqe_jni.c)
+target_link_libraries(coqe_jni coqe)

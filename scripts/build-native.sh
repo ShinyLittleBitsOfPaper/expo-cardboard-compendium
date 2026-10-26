@@ -2,7 +2,7 @@
 # Cross-compile libcoqe for the Expo module. Needs rustup + cargo-ndk (Android) / Xcode (iOS). NOT run in CI yet.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-M=modules/expo-scryfall-engine
+M=modules/expo-cardboard-compendium
 case "${1:-}" in
   android)
     rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android

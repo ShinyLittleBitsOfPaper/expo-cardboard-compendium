@@ -1,6 +1,6 @@
 # Notice
 
-expo-scryfall-engine is an **unofficial** project. It is not produced by, endorsed by,
+expo-cardboard-compendium is an **unofficial** project. It is not produced by, endorsed by,
 or affiliated with Scryfall LLC, MTGJSON, or Wizards of the Coast.
 
 - Card data originates from [Scryfall](https://scryfall.com) bulk data. Use of that data is

@@ -32,7 +32,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: jniLibs
-          path: modules/expo-scryfall-engine/android/src/main/jniLibs
+          path: modules/expo-cardboard-compendium/android/src/main/jniLibs
 
   ios:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: xcframework
-          path: modules/expo-scryfall-engine/ios/libcoqe.xcframework
+          path: modules/expo-cardboard-compendium/ios/libcoqe.xcframework
 
   package:
     needs: [android, ios]
@@ -58,24 +58,24 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: jniLibs
-          path: modules/expo-scryfall-engine/android/src/main/jniLibs
+          path: modules/expo-cardboard-compendium/android/src/main/jniLibs
       - uses: actions/download-artifact@v4
         with:
           name: xcframework
-          path: modules/expo-scryfall-engine/ios/libcoqe.xcframework
+          path: modules/expo-cardboard-compendium/ios/libcoqe.xcframework
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Pack (version = tag without the leading v)
-        working-directory: modules/expo-scryfall-engine
+        working-directory: modules/expo-cardboard-compendium
         run: |
           [ "${GITHUB_REF_TYPE}" = "tag" ] && npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
           npm pack
       - uses: actions/upload-artifact@v4
         with:
           name: package
-          path: modules/expo-scryfall-engine/*.tgz
+          path: modules/expo-cardboard-compendium/*.tgz
       - if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          files: modules/expo-scryfall-engine/*.tgz
+          files: modules/expo-cardboard-compendium/*.tgz
