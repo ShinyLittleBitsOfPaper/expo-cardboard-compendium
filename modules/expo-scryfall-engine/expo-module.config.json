@@ -1,0 +1,5 @@
+{
+  "platforms": ["android", "apple"],
+  "android": { "modules": ["expo.modules.scryfallengine.ExpoScryfallEngineModule"] },
+  "apple": { "modules": ["ExpoScryfallEngineModule"] }
+}

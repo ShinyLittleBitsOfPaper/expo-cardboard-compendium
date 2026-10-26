@@ -41,6 +41,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "coqc-engine"
+version = "0.0.1"
+dependencies = [
+ "coqc",
+ "coqc-format",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "coqc-format"
 version = "0.0.1"
 dependencies = [

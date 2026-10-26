@@ -1,0 +1,19 @@
+[package]
+name = "coqc-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "On-device engine: opens COQD + COQS, Scryfall-syntax search, card lookup, updates; C ABI for the Expo module"
+
+[lib]
+name = "coqe"
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[dependencies]
+coqc-format = { path = "../format" }
+serde_json = "1"
+sha2 = "0.10"
+
+[dev-dependencies]
+coqc = { path = "../compiler" }

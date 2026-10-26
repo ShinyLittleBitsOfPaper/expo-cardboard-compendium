@@ -1,0 +1,13 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.scryfallengine'
+version = '0.0.1'
+
+android {
+  namespace "expo.modules.scryfallengine"
+  defaultConfig { externalNativeBuild { cmake { arguments "-DANDROID_STL=none" } } }
+  externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt" } }
+  // libcoqe.so per ABI, produced by scripts/build-native.sh
+  sourceSets { main { jniLibs.srcDirs = ['src/main/jniLibs'] } }
+}

@@ -143,6 +143,9 @@ pub struct Query {
     /// None = no limit
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Host-supplied scope: only these printing rows can match (a registered set, e.g. a collection or tag).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Vec<u32>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -828,6 +831,11 @@ impl SearchIndex {
         let mut hits = hits;
         if !q.include_extras {
             hits.clear(&self.hidden_p);
+        }
+        if let Some(scope) = &q.scope {
+            let mut sb = Bits::new(self.p_oracle.len());
+            scope.iter().filter(|&&r| (r as usize) < self.p_oracle.len()).for_each(|&r| sb.set(r as usize));
+            hits.and(&sb);
         }
         let mut rows: Vec<u32> = hits.ones().map(|i| i as u32).collect();
         if q.unique == Unique::Cards {
