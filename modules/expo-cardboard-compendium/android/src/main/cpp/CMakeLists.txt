@@ -6,5 +6,8 @@ if(NOT EXISTS ${COQE_SO})
 endif()
 add_library(coqe SHARED IMPORTED)
 set_target_properties(coqe PROPERTIES IMPORTED_LOCATION ${COQE_SO})
+# The Rust cdylib has no SONAME. Without this, CMake records the build machine's absolute path to the
+# file as libcoqe_jni.so's DT_NEEDED entry and dlopen fails on the device ("library /home/.../libcoqe.so not found").
+set_target_properties(coqe PROPERTIES IMPORTED_NO_SONAME TRUE)
 add_library(coqe_jni SHARED coqe_jni.c)
 target_link_libraries(coqe_jni coqe)

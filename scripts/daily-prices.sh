@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 WORK="${1:-data/prices}"; BIN=./target/release/coqc
-UA="${COQC_USER_AGENT:-expo-cardboard-compendium/0.0.1 (set COQC_USER_AGENT to include a contact)}"
+UA="${COQC_USER_AGENT:-expo-cardboard-compendium/0.0.2 (set COQC_USER_AGENT to include a contact)}"
 [ -x "$BIN" ] || { echo "build first: cargo build --release" >&2; exit 1; }
 mkdir -p "$WORK/raw" "$WORK/releases" "$WORK/patches"
 CARDS="${CARDS:-$(ls -1 data/daily/releases/cards-*.coqd 2>/dev/null | sort | tail -1)}"

@@ -22,7 +22,9 @@ Notes
 - `modules/expo-cardboard-compendium` is a scaffold (TS API, Kotlin + JNI shim, Swift, podspec) and `scripts/build-native.sh` cross-compiles.
   None of it has been built or run: there is no Android/Xcode toolchain here. Expect first-build fixes (Gradle plugin names, CMake paths).
 
-## Release pipeline (`.github/workflows/native.yml`, untested)
+## Release pipeline (`.github/workflows/native.yml`)
+Versioning: one version everywhere, equal to the tag. `scripts/set-version.sh X.Y.Z` (then commit, push, tag `vX.Y.Z`, push the tag);
+the `test` job runs `scripts/check-version.sh` on tags and fails on a mismatch.
 - Every push/PR: `cargo test --workspace`.
 - Tag `vX.Y.Z` (or manual dispatch): build `libcoqe.so` for 3 Android ABIs (cargo-ndk installed with taiki-e/install-action, runner NDK) and
   `libcoqe.xcframework` (macOS runner), then `npm pack` the module with both inside and attach the `.tgz` to the GitHub Release.

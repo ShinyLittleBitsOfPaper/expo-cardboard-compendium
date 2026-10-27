@@ -3,8 +3,8 @@
 #
 #   scripts/daily.sh [workdir] [--force]        (default workdir: data/daily)
 #
-# Layout: <workdir>/raw/default-cards.jsonl, <workdir>/releases/cards-YYYYMMDDHHMM.coqd,
-#         <workdir>/patches/<prev>-to-<new>.coqp (labels: bulk updated_at, UTC)
+# Layout: <workdir>/raw/default-cards.jsonl, <workdir>/releases/cards-YYYYMMDDHHMM.coqd (+ .coqs search index),
+#         <workdir>/patches/<prev>-to-<new>.coqp (+ .coqsd index delta)  (labels: bulk updated_at, UTC)
 # Run it once a day. The first run makes the first release; later runs build on the latest one.
 # Prints a summary of each compile (counts, derived URLs, healed printings, sizes); run `coqc compile`
 # directly for the full report.
@@ -50,4 +50,12 @@ else
   echo "== first release: compiling $STAMP"
   "$BIN" compile "$RAW" -o "$NEW" --source-date "$SDATE" --progress | grep -E "$SUMMARY"
 fi
-echo "release: $NEW ($(du -h "$NEW" | cut -f1))"
+# Search index for the release (+ delta from the previous one); index-diff replays its own delta to verify it.
+NEWIDX="${NEW%.coqd}.coqs"
+"$BIN" index-build "$NEW" -o "$NEWIDX" | grep -E '^(total|reload|round trip)'
+if [ -n "$PREV" ]; then
+  PREVIDX="${PREV%.coqd}.coqs"
+  [ -f "$PREVIDX" ] || "$BIN" index-build "$PREV" -o "$PREVIDX" >/dev/null
+  "$BIN" index-diff "$PREVIDX" "$NEWIDX" -o "$WORK/patches/$PSTAMP-to-$STAMP.coqsd" | grep -E '^(trigram postings|delta:)'
+fi
+echo "release: $NEW ($(du -h "$NEW" | cut -f1)), index $NEWIDX ($(du -h "$NEWIDX" | cut -f1))"

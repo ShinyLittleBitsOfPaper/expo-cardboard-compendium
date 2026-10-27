@@ -2,7 +2,7 @@ apply plugin: 'com.android.library'
 apply plugin: 'expo-module-gradle-plugin'
 
 group = 'expo.modules.cardboardcompendium'
-version = '0.0.1'
+version = '0.0.2'
 
 android {
   namespace "expo.modules.cardboardcompendium"
@@ -10,7 +10,7 @@ android {
     // expo-module-gradle-plugin's Maven publication step requires versionName
     // ("'android.defaultConfig.versionName' is not defined" otherwise).
     versionCode 1
-    versionName "0.0.1"
+    versionName "0.0.2"
     externalNativeBuild { cmake { arguments "-DANDROID_STL=none" } }
   }
   externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt" } }

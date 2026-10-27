@@ -31,7 +31,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "coqc"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "coqc-format",
  "serde",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "coqc-engine"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "coqc",
  "coqc-format",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "coqc-format"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "serde",
  "serde_json",

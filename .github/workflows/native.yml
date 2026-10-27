@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Tag must match the versions in the repo (run scripts/set-version.sh X.Y.Z first)
+        if: github.ref_type == 'tag'
+        run: scripts/check-version.sh "$GITHUB_REF_NAME"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
