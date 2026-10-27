@@ -10,6 +10,13 @@ Not done: automated publishing (no cron), client-side download/update flow, pric
 iOS library, conformance testing against Scryfall's own search results, published data is blocked on Scryfall's permission reply.
 
 ## Milestone 1: the cron job (data publishing)
+**Status 2026-10-27 (0.0.2-5): built, not yet run on GitHub.** `coqc manifest|zst|unzst`, `scripts/data-build.sh` (restore from
+`data-latest`, daily.sh + daily-prices.sh, `coqc verify`, stage), `scripts/data-publish.sh` (draft run release, upload, size check,
+publish, manifest last, delete old full files, prune), `.github/workflows/data.yml`. `scripts/test-data-pipeline.sh` runs the whole
+flow offline (synthetic cards, mock `gh`) including a simulated client walking day 1 -> day 3 through the chain; prices there are
+stand-in files. Remaining for the exit criteria: a `publish=false` dry run on GitHub, then three scheduled runs. Needs Scryfall's
+reply before the first real publish. The index is published as `cards-<stamp>.coqs.zst` (4.74 MiB vs 21.9 MiB raw): GitHub serves
+release assets as uploaded, with no transparent compression, so clients download the .zst and decompress it themselves (Milestone 2).
 Goal: a scheduled GitHub Action compiles, verifies and publishes data; clients can find it from one stable URL.
 
 **Decision 1 (hosting): decided, a single repo** (this one). Data is published as GitHub Releases next to the code releases, with

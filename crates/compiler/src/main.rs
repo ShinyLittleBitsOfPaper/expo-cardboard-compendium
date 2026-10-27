@@ -29,6 +29,11 @@ USAGE:
   coqc prices  <AllPricesToday.json> --cards <cards.coqd> --idmap <idmap.coqm> -o <prices.coqr>
   coqc prices-patch <old.coqr> <new.coqr> -o <p.coqx>  /  coqc prices-apply <old.coqr> <p.coqx> -o <new.coqr>
   coqc price   <prices.coqr> <cards.coqd> <card name>  show stored prices of every printing of a card
+  coqc zst     <in> -o <out> [--level N]           zstd-compress a file (the published index is .coqs.zst, level 19)
+  coqc unzst   <in.zst> -o <out>                   decompress it
+  coqc manifest --cards <c.coqd> --index <c.coqs.zst> --prices <p.coqr> --run <data-tag> --at <ISO UTC> --keep-since <ISO UTC>
+               [--repo OWNER/REPO | --base-url URL] [--prev manifest.json] [--cards-patch f.coqp --index-delta f.coqsd]
+               [--prices-patch f.coqx] [--rebase] -o manifest.json     (see docs/roadmap.md, Milestone 1)
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
 
@@ -508,6 +513,105 @@ fn cmd_price(args: &[String]) {
     }
 }
 
+fn cmd_zst(args: &[String]) {
+    let inp = args.first().unwrap_or_else(|| die("usage: coqc zst <in> -o <out> [--level N]"));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o"));
+    let level: i32 = flag_value(args, "--level").map_or(19, |v| v.parse().unwrap_or_else(|_| die("bad --level")));
+    let b = rd(inp);
+    let z = zstd::encode_all(&b[..], level).unwrap_or_else(|e| die(&e.to_string()));
+    std::fs::write(&out, &z).unwrap_or_else(|e| die(&e.to_string()));
+    println!("{out}: {} -> {}", mb(b.len() as u64), mb(z.len() as u64));
+}
+
+fn cmd_unzst(args: &[String]) {
+    let inp = args.first().unwrap_or_else(|| die("usage: coqc unzst <in.zst> -o <out>"));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o"));
+    let b = zstd::decode_all(&rd(inp)[..]).unwrap_or_else(|e| die(&format!("{inp}: {e}")));
+    std::fs::write(&out, &b).unwrap_or_else(|e| die(&e.to_string()));
+    println!("{out}: {}", mb(b.len() as u64));
+}
+
+fn measure(path: &str) -> coqc::manifest::Measured {
+    let b = rd(path);
+    let name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path).to_string();
+    coqc::manifest::Measured { name, size: b.len() as u64, sha256: coqc::manifest::sha_hex(&b) }
+}
+
+fn u16_at(b: &[u8], i: usize) -> u16 {
+    b.get(i..i + 2).map_or(0, |s| u16::from_le_bytes([s[0], s[1]]))
+}
+
+/// `cards-<stamp>.ext` -> stamp
+fn stamp_of(path: &str, prefix: &str) -> String {
+    let n = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
+    let stem = n.strip_prefix(prefix).unwrap_or_else(|| die(&format!("{n}: expected a name starting with {prefix}")));
+    stem.split('.').next().unwrap_or(stem).to_string()
+}
+
+fn cmd_manifest(args: &[String]) {
+    use coqc::manifest::*;
+    let req = |f: &str| flag_value(args, f).unwrap_or_else(|| die(&format!("missing {f}")));
+    let out = req("-o");
+    let base_url = flag_value(args, "--base-url").unwrap_or_else(|| {
+        format!("https://github.com/{}/releases/download", flag_value(args, "--repo").unwrap_or_else(|| die("need --repo or --base-url")))
+    });
+    let (cards_p, index_p, prices_p) = (req("--cards"), req("--index"), req("--prices"));
+
+    let cb = rd(&cards_p);
+    let parsed = parse(&cb).unwrap_or_else(|e| die(&format!("{cards_p}: {e}")));
+    let (format, min_reader) = (u16_at(&cb, 4), u16_at(&cb, 6));
+    let raw = zstd::decode_all(&rd(&index_p)[..]).unwrap_or_else(|e| die(&format!("{index_p}: not zstd: {e}")));
+    if raw.get(..4) != Some(b"COQS") {
+        die(&format!("{index_p}: not a compressed .coqs"));
+    }
+    // The index must belong to the cards file (its header carries the dataset's SHA-256).
+    if raw.get(6..38).map(|s| s.iter().map(|b| format!("{b:02x}")).collect::<String>()) != Some(sha_hex(&cb)) {
+        die(&format!("{index_p}: built from a different dataset than {cards_p}"));
+    }
+    let pb = rd(&prices_p);
+    if pb.get(..4) != Some(b"COQR") {
+        die(&format!("{prices_p}: not a .coqr"));
+    }
+    let measure_opt = |f: &str| flag_value(args, f).map(|p| measure(&p));
+    let cards_patch = measure_opt("--cards-patch").map(|p| (p, measure_opt("--index-delta")));
+    let inp = Inputs {
+        base_url,
+        run_tag: req("--run"),
+        generated_at: req("--at"),
+        keep_since: req("--keep-since"),
+        force_rebase: args.iter().any(|a| a == "--rebase"),
+        cards: NewCards {
+            stamp: stamp_of(&cards_p, "cards-"),
+            epoch: parsed.cards_epoch,
+            format,
+            min_reader,
+            file: measure(&cards_p),
+            index: IndexMeasured { file: measure(&index_p), raw_size: raw.len() as u64, raw_sha256: sha_hex(&raw) },
+            index_version: u16_at(&raw, 4),
+            patch: cards_patch,
+        },
+        prices: NewPrices {
+            stamp: stamp_of(&prices_p, "prices-"),
+            format: u16_at(&pb, 4),
+            min_reader: u16_at(&pb, 6),
+            file: measure(&prices_p),
+            patch: measure_opt("--prices-patch"),
+        },
+    };
+    let prev: Option<Manifest> = flag_value(args, "--prev").map(|p| {
+        serde_json::from_slice(&rd(&p)).unwrap_or_else(|e| die(&format!("{p}: {e}")))
+    });
+    let m = build(&inp, prev.as_ref()).unwrap_or_else(|e| die(&e));
+    std::fs::write(&out, serde_json::to_string_pretty(&m).unwrap() + "\n").unwrap_or_else(|e| die(&e.to_string()));
+    println!(
+        "{out}: cards {} prices {} epoch {} rebase {} chains cards {} prices {}",
+        m.cards.stamp, m.prices.stamp, m.epoch, m.rebase, m.cards.patches.len(), m.prices.patches.len()
+    );
+    // For scripts: names that belong in data-latest (full files) and in the run's release (patches).
+    println!("latest: {}", current_files(&m).join(" "));
+    println!("run: {}", run_files(&m).join(" "));
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = args.first() else {
@@ -533,6 +637,9 @@ fn main() {
         "index-apply" => cmd_index_apply(rest),
         "patch" => cmd_patch(rest),
         "apply" => cmd_apply(rest),
+        "zst" => cmd_zst(rest),
+        "unzst" => cmd_unzst(rest),
+        "manifest" => cmd_manifest(rest),
         _ => {
             print!("{USAGE}");
             exit(1)

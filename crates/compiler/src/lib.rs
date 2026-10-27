@@ -6,6 +6,7 @@
 //! every card rebuilds to exactly its original JSON (see `heal`).
 
 pub use coqc_format::patch;
+pub mod manifest;
 pub mod prices;
 pub mod quick;
 pub mod synth;
