@@ -47,6 +47,8 @@ scripts/daily.sh                 # fetch -> compile on top of the latest release
 Keeps `data/daily/releases/cards-YYYYMMDDHHMM.coqd` and `patches/<old>-to-<new>.coqp`. By hand:
 `coqc patch old.coqd new.coqd -o p.coqp`, `coqc apply old.coqd p.coqp -o new.coqd` (verifies SHA-256).
 
+See `docs/roadmap.md` for what is planned next (data pipeline, client sync, engine gaps).
+
 ## Layout
 
 - `crates/format`: `coqc-format` (records, container, card JSON reconstruction)
