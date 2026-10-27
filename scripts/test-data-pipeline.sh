@@ -8,6 +8,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 BIN="$PWD/target/release/coqc"; [ -x "$BIN" ] || { echo "cargo build --release -p coqc first" >&2; exit 1; }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+# The workflow exports PUBLISH/REBASE/GH_TOKEN for the whole job; the test must not depend on them.
+unset REBASE GH_TOKEN
 export MOCK_GH_DIR="$T/gh" GH="$PWD/scripts/mock-gh.sh" GITHUB_REPOSITORY=o/r RETAIN_DAYS=30
 mkdir -p "$MOCK_GH_DIR"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -42,7 +44,7 @@ for i in 0 1 2 3; do
   # publish: dry run must not touch anything, the real one must
   PUBLISH=false scripts/data-publish.sh "$W" >/dev/null
   [ "$d" = 1 ] && [ -d "$T/gh/data-latest" ] && fail "dry run published"
-  MOCK_GH_NOW="${at}T22:00:00Z" PUBLISH_NOW="${at}T22:00:00Z" scripts/data-publish.sh "$W" >/dev/null
+  PUBLISH=true MOCK_GH_NOW="${at}T22:00:00Z" PUBLISH_NOW="${at}T22:00:00Z" scripts/data-publish.sh "$W" >/dev/null
   PREV="$W/cards-$S.coqd"; PPREV="$PS"
   # data-latest holds exactly the current full files + the manifest
   got="$(ls "$T/gh/data-latest" | sort | tr '\n' ' ')"
