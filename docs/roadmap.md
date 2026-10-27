@@ -12,30 +12,34 @@ iOS library, conformance testing against Scryfall's own search results, publishe
 ## Milestone 1: the cron job (data publishing)
 Goal: a scheduled GitHub Action compiles, verifies and publishes data; clients can find it from one stable URL.
 
-**Decision 1 (hosting): a separate public data repo**, `ShinyLittleBitsOfPaper/cardboard-compendium-data`, whose workflow checks out
-the code repo at a pinned tag, builds `coqc`, and publishes to the data repo's own Releases with its own `GITHUB_TOKEN` (no PAT).
-Why: "latest release" URLs stay unambiguous (the code repo's `v*` releases would collide), pruning data releases never touches code
-releases, the source or host can change (e.g. if Scryfall declines, or a move to Cloudflare R2) without touching code, and the token
-scope is small. Alternative: one repo with a rolling `data-latest` tag.
+**Decision 1 (hosting): decided, a single repo** (this one). Data is published as GitHub Releases next to the code releases, with
+these rules so the two do not collide: data releases are marked prerelease and never "Latest" (so `v*` code releases keep that label),
+and clients never use `releases/latest`: they use a fixed tag, `data-latest` (below). The cron workflow runs on the default branch
+(`trunk`) and builds `coqc` from that checkout after `cargo test`, using the repo's own `GITHUB_TOKEN` (`contents: write`, no PAT).
+Accepted risk: data is built by unreleased code, so the job's verify steps (below) are the safety net. The data source or host can
+still be split out later (the manifest URL is the only thing clients hard-code).
 
 **Decision 2 (cadence): once a day, ~22:00 UTC**, after Scryfall's ~21:05 refresh (they refresh about every 12 h, 09:05/21:05). Prices
 (MTGJSON, daily) run in the same job. Twice daily is a config change if freshness matters. GitHub cron is best effort (can be late or
 skipped), so the job is idempotent: it exits cleanly if the bulk `updated_at` is already released, and `workflow_dispatch` is allowed.
 
-Release layout (tag `data-YYYYMMDDHHMM`, one per run):
-- `cards-<stamp>.coqd`, `cards-<stamp>.coqs.zst`, `prices-<date>.coqr`: full files, kept only on the newest 2 releases (assets of older
-  releases are deleted; clients never need an old full file).
-- `cards-<prev>-to-<stamp>.coqp`, `...coqsd`, `prices-<old>-to-<new>.coqx`: patches from the previous release, kept for 30 days.
-- `manifest.json` (also at a fixed URL, see below): format versions, epoch, current stamps, sha256 + size of every asset, the patch chain
-  for the last 30 days, `min_client_format`, `generated_at`, `rebase` flag.
-- Stable entry point: the data repo's `releases/latest/download/manifest.json`.
+Release layout:
+- **`data-latest`** (one rolling release, fixed URL): `manifest.json` plus the current full files `cards-<stamp>.coqd`,
+  `cards-<stamp>.coqs.zst`, `prices-<date>.coqr`. File names carry the stamp, so a new run uploads the new files first, the manifest
+  last, and only then deletes the old full files: a client never sees a manifest pointing at a missing file.
+- **`data-<stamp>`** (one immutable prerelease per run, tag `data-YYYYMMDDHHMM`): the patches from the previous run
+  `cards-<prev>-to-<stamp>.coqp`, `.coqsd`, `prices-<old>-to-<new>.coqx`; kept 30 days, then the release and its tag are deleted.
+- `manifest.json`: format versions, epoch, current stamps, sha256 + size of every asset, the patch chain for the last 30 days (URLs into
+  the `data-<stamp>` releases), `min_client_format`, `generated_at`, `rebase` flag.
+- Entry URL clients hard-code: `https://github.com/ShinyLittleBitsOfPaper/expo-cardboard-compendium/releases/download/data-latest/manifest.json`.
+- `native.yml` only triggers on `v*` tags, so `data-*` tags never start a module build.
 
 Pipeline steps (any failure = no publish, workflow fails and emails):
-1. Download the previous release's `.coqd`/`.coqs` (for `--prev` row stability); none => first release / new epoch.
+1. Run `cargo test`, then download the current full files from `data-latest` (for `--prev` row stability); none => first release / new epoch.
 2. Fetch bulk (UA header set), compile, `verify` against the raw file (0 mismatches required), patch + replay byte-identical.
 3. Index build + delta + replay, price compile + delta + replay.
-4. Create the release as a draft, upload everything, verify the uploaded sizes/hashes, then publish and replace the manifest last.
-5. Prune: delete full-file assets beyond the newest 2, patches older than 30 days.
+4. Create `data-<stamp>` as a draft with the patches, upload the new full files to `data-latest`, verify uploaded sizes/hashes, publish, replace the manifest last, then delete the old full files.
+5. Prune: delete `data-<stamp>` releases (and tags) older than 30 days.
 - **Epoch/rebase**: a format version bump or heavy tombstone growth starts a new epoch (`rebase: true`); clients on an older epoch
   download the full files. Prices built against an older card release stay valid inside an epoch (rows only append).
 - **Card ids that Scryfall retires**: consume Scryfall's migrations feed (merge/delete) and publish a small `migrations.json` so user data keyed
