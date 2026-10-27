@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- 2026-10-27, 0.0.2-4: roadmap: recorded real measurements (patch/delta sizes, per-section index sizes, emulator open/search times) and the decision to swap slbop to the engine fully, no feature flag. Docs only.
 - 2026-10-27, 0.0.2-3: roadmap updated with the hosting decision: single repo, rolling `data-latest` release (manifest + current full files) plus immutable `data-<stamp>` prerelease patch releases, data never marked Latest, `GITHUB_TOKEN` only. Docs only.
 - 2026-10-27, 0.0.2-2: `docs/roadmap.md`: plan for finishing the compendium and the daily data pipeline before the slbop swap (cron/publishing design with a separate data repo, once-daily cadence, release layout and manifest, client sync in the module, engine gaps, measurements). Docs only; proposed defaults for three decisions.
 - 2026-10-26, 0.0.2-1: versions now follow the release tag. `scripts/set-version.sh X.Y.Z` sets Cargo.toml (+ Cargo.lock), the module's package.json, build.gradle (version + versionName), the podspec and the fetch scripts' User-Agent; `scripts/check-version.sh vX.Y.Z` verifies them and CI's `test` job runs it on tag pushes, so a tag that disagrees with the files fails before anything is built. Everything set to 0.0.2. Release procedure: `scripts/set-version.sh X.Y.Z`, commit, push, tag `vX.Y.Z`, push the tag.

@@ -73,10 +73,15 @@ failure, never leave the app without a working dataset. Planning logic is pure a
 Publish the module (tagged tarball is enough), write the data-source adapter note (Scryfall bulk now; MTGJSON as a fallback source if
 permission is refused), and keep the "dataset-agnostic" direction as a design note only (README Naming) until slbop is live.
 
+## Measurements (2026-10-27, cards-202610270905, 119,339 printings)
+- `.coqp` 0.26 MB vs 29.73 MB full; `.coqx` 0.11 MB vs 0.36 MB full `.coqr`; index delta 0.27 MB.
+- `.coqs` 21.9 MB on disk (raw, mappable; compare 4.7 MB whole-file zstd). Per-section zstd: text_trigrams 2.22, name_trigrams 0.73, full_texts 0.72, texts 0.66, names x3 0.88, printing_cols 0.27, rest <0.2 (~5.9 MB). Raw bulk is `full_texts` 6.2 + `texts` 5.0 + `text_trigrams` 3.7. Download cost is small; the cost is on-device disk (~52 MB for .coqd + .coqs).
+- Device (emulator): open under 1 s by feel (no logged number); default search ~4k matches in 545 ms.
+
 ## Measurements still needed (from your machine)
 - Real `.coqp` and `.coqsd` sizes between two consecutive releases (`ls -l data/daily/patches`), and `.coqr/.coqx` sizes.
 - Open time and a search time from the device (Settings > Card engine), plus the reported `index` value.
 
 ## After this: slbop (summary, see slbop TODO #104)
-Re-key user data from `card_ref_id` to `scryfall_id`, move card joins app-side, engine-backed search behind a flag, prices, scanner
+Re-key user data from `card_ref_id` to `scryfall_id`, move card joins app-side, engine-backed search as a full swap (decided 2026-10-27: no feature flag, no half measures), prices, scanner
 lookups, then retire the SQLite card ingestion. Only start once Milestones 1 and 2 hold.
