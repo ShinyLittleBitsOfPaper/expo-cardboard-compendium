@@ -1,6 +1,6 @@
-# Generalising coq: schema-driven format, engine and sync (DRAFT, 2026-10-27)
+# Generalising coq: schema-driven format, engine and sync (DECISIONS MADE 2026-10-28)
 
-Status: **draft for approval, no code yet.** Written from a skim of the crates (types.rs, container.rs, patch.rs, search.rs,
+Status: **decisions below approved, no code yet.** Written from a skim of the crates (types.rs, container.rs, patch.rs, search.rs,
 coqs.rs, engine, manifest); verify each claim against the code in stage S0 before relying on it.
 
 ## Why now
@@ -27,7 +27,7 @@ and mirrored in the `.coqs`. The engine reads layouts from the file; it contains
 dialect (`coqc-mtg`) selected by the schema's id; the generic query language handles `field op value`, negation, `or`, parentheses,
 quoted strings and regex, with fields and operator semantics taken from the schema. A schema without a dialect still works.
 
-**Overlays replace prices.** `.coqr` generalises to an overlay: numeric columns attached to rows of one table, own file, own delta,
+**Overlays replace prices.** `.coqr` generalises to an overlay (a `.coqd` with the overlay flag): numeric columns attached to rows of one table, own file, own delta,
 refreshed independently (MTG: prices keyed by printing row).
 
 **Manifest v2.** A list of datasets with roles (`base`, `index`, `overlay`) instead of fixed `cards`/`prices`; the planner and executor
@@ -52,12 +52,15 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
 MTG golden queries identical before and after; `coqc verify` 0 mismatches; file sizes within +5%, search latency within +10% of the
 numbers above; the second schema passes compile, patch, index delta and the simulated-client test with no Magic code involved.
 
-## Decisions needed
-1. Self-describing schema in the file plus compiled dialects (proposed), versus fully compiled-in schemas?
-2. How generic should the query language be: schema-driven fields and operators (proposed), or Scryfall syntax kept as the only
-   grammar with the data model alone generalised?
-3. Should the very first data release wait for S4, so clients never see the old formats (proposed: yes)?
-4. Keep `.coqd/.coqs/.coqr` extensions, or rename now since nothing is published?
+## Decisions (approved 2026-10-28)
+1. **Self-describing schema in the file** plus compiled dialects (not fully compiled-in schemas).
+2. **Schema-driven query language**: fields and operators come from the schema; Scryfall syntax lives in the MTG dialect only.
+3. **No data release before S4**, i.e. until the compendium is in a solid state; clients never see the old formats.
+4. **Three extensions only**: `.coqd` data (any table dataset, including price overlays), `.coqi` index (was `.coqs`), `.coqp` patch
+   (data, index and overlay patches alike). The file header carries the kind (data/index, base/overlay, patch target) and the manifest
+   carries the role, so no per-kind extensions. `.coqr`, `.coqx`, `.coqsd` are retired at the S2-S4 format bumps; file names keep a
+   prefix (`cards-`, `prices-`) to tell them apart. Open point for S2: an overlay is a dataset whose rows are keyed by a parent table
+   key and replaced wholesale; confirm it needs no container feature beyond that.
 
 ## Risks
 Generic columns may cost speed and size against today's tuned structs: measure at every stage and keep a fast path for hot fields.
