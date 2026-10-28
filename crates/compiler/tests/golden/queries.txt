@@ -1,0 +1,122 @@
+bolt [cards] => 1 | Lightning Bolt#0
+bolt [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+"lightning bolt" [cards] => 1 | Lightning Bolt#0
+"lightning bolt" [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+!"lightning bolt" [cards] => 1 | Lightning Bolt#0
+!"lightning bolt" [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+lim-dul [cards] => 1 | Lim-Dûl's Vault#6
+lim-dul [prints] => 1 | Lim-Dûl's Vault#6
+delver [cards] => 1 | Delver of Secrets // Insectile Aberration#1
+delver [prints] => 1 | Delver of Secrets // Insectile Aberration#1
+insectile [cards] => 1 | Delver of Secrets // Insectile Aberration#1
+insectile [prints] => 1 | Delver of Secrets // Insectile Aberration#1
+fire ice [cards] => 1 | Fire // Ice#2
+fire ice [prints] => 1 | Fire // Ice#2
+stomp [cards] => 1 | Bonecrusher Giant // Stomp#3
+stomp [prints] => 1 | Bonecrusher Giant // Stomp#3
+o:damage [cards] => 3 | Bonecrusher Giant // Stomp#3, Fire // Ice#2, Lightning Bolt#0
+o:damage [prints] => 4 | Bonecrusher Giant // Stomp#3, Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9
+o:"damage to any" [cards] => 1 | Lightning Bolt#0
+o:"damage to any" [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+o:mana [cards] => 2 | Colorless Rock#7, Little Girl#5
+o:mana [prints] => 2 | Colorless Rock#7, Little Girl#5
+o:"top five" [cards] => 1 | Lim-Dûl's Vault#6
+o:"top five" [prints] => 1 | Lim-Dûl's Vault#6
+o:~ [cards] => 2 | Fire // Ice#2, Lightning Bolt#0
+o:~ [prints] => 3 | Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9
+-o:damage [cards] => 6 | Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+-o:damage [prints] => 6 | Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+t:instant [cards] => 4 | Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6, Weird One#8
+t:instant [prints] => 5 | Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9, Lim-Dûl's Vault#6, Weird One#8
+t:creature [cards] => 4 | Bonecrusher Giant // Stomp#3, Delver of Secrets // Insectile Aberration#1, Little Girl#5, Reversible // Card#4
+t:creature [prints] => 4 | Bonecrusher Giant // Stomp#3, Delver of Secrets // Insectile Aberration#1, Little Girl#5, Reversible // Card#4
+t:human [cards] => 2 | Delver of Secrets // Insectile Aberration#1, Little Girl#5
+t:human [prints] => 2 | Delver of Secrets // Insectile Aberration#1, Little Girl#5
+t:giant [cards] => 1 | Bonecrusher Giant // Stomp#3
+t:giant [prints] => 1 | Bonecrusher Giant // Stomp#3
+t:artifact [cards] => 1 | Colorless Rock#7
+t:artifact [prints] => 1 | Colorless Rock#7
+t:creature t:human [cards] => 2 | Delver of Secrets // Insectile Aberration#1, Little Girl#5
+t:creature t:human [prints] => 2 | Delver of Secrets // Insectile Aberration#1, Little Girl#5
+t:instant or t:artifact [cards] => 5 | Colorless Rock#7, Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6, Weird One#8
+t:instant or t:artifact [prints] => 6 | Colorless Rock#7, Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9, Lim-Dûl's Vault#6, Weird One#8
+-t:instant [cards] => 5 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Little Girl#5, Reversible // Card#4
+-t:instant [prints] => 5 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Little Girl#5, Reversible // Card#4
+c:r [cards] => 3 | Bonecrusher Giant // Stomp#3, Fire // Ice#2, Lightning Bolt#0
+c:r [prints] => 4 | Bonecrusher Giant // Stomp#3, Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9
+c:u [cards] => 3 | Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lim-Dûl's Vault#6
+c:u [prints] => 3 | Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lim-Dûl's Vault#6
+c:ur [cards] => 1 | Fire // Ice#2
+c:ur [prints] => 1 | Fire // Ice#2
+c>=ur [cards] => 1 | Fire // Ice#2
+c>=ur [prints] => 1 | Fire // Ice#2
+c<=ur [cards] => 5 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0
+c<=ur [prints] => 6 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9
+c:c [cards] => 9 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+c:c [prints] => 10 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+c:m [cards] => 3 | Fire // Ice#2, Lim-Dûl's Vault#6, Weird One#8
+c:m [prints] => 3 | Fire // Ice#2, Lim-Dûl's Vault#6, Weird One#8
+c:w [cards] => 2 | Little Girl#5, Weird One#8
+c:w [prints] => 2 | Little Girl#5, Weird One#8
+-c:r [cards] => 6 | Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+-c:r [prints] => 6 | Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+id:r [cards] => 4 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Lightning Bolt#0, Reversible // Card#4
+id:r [prints] => 5 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Lightning Bolt#0, Lightning Bolt#9, Reversible // Card#4
+id<=ub [cards] => 4 | Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Lim-Dûl's Vault#6, Reversible // Card#4
+id<=ub [prints] => 4 | Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Lim-Dûl's Vault#6, Reversible // Card#4
+id=gw [cards] => 1 | Weird One#8
+id=gw [prints] => 1 | Weird One#8
+id:c [cards] => 2 | Colorless Rock#7, Reversible // Card#4
+id:c [prints] => 2 | Colorless Rock#7, Reversible // Card#4
+mv=1 [cards] => 5 | Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Lightning Bolt#0, Lim-Dûl's Vault#6, Weird One#8
+mv=1 [prints] => 6 | Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Lightning Bolt#0, Lightning Bolt#9, Lim-Dûl's Vault#6, Weird One#8
+mv>=3 [cards] => 2 | Bonecrusher Giant // Stomp#3, Fire // Ice#2
+mv>=3 [prints] => 2 | Bonecrusher Giant // Stomp#3, Fire // Ice#2
+mv<1 [cards] => 1 | Little Girl#5
+mv<1 [prints] => 1 | Little Girl#5
+cmc=0.5 [cards] => 1 | Little Girl#5
+cmc=0.5 [prints] => 1 | Little Girl#5
+mv=4 [cards] => 1 | Fire // Ice#2
+mv=4 [prints] => 1 | Fire // Ice#2
+r:common [cards] => 8 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6, Reversible // Card#4, Weird One#8
+r:common [prints] => 9 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9, Lim-Dûl's Vault#6, Reversible // Card#4, Weird One#8
+r:rare [cards] => 1 | Little Girl#5
+r:rare [prints] => 1 | Little Girl#5
+r>=rare [cards] => 1 | Little Girl#5
+r>=rare [prints] => 1 | Little Girl#5
+r<rare [cards] => 8 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6, Reversible // Card#4, Weird One#8
+r<rare [prints] => 9 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9, Lim-Dûl's Vault#6, Reversible // Card#4, Weird One#8
+s:m11 [cards] => 9 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+s:m11 [prints] => 9 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+e:p23 [cards] => 1 | Lightning Bolt#9
+e:p23 [prints] => 1 | Lightning Bolt#9
+s:p23 or s:zzz [cards] => 1 | Lightning Bolt#9
+s:p23 or s:zzz [prints] => 1 | Lightning Bolt#9
+cn:101 [cards] => 1 | Lightning Bolt#0
+cn:101 [prints] => 1 | Lightning Bolt#0
+cn:102 [cards] => 1 | Lightning Bolt#9
+cn:102 [prints] => 1 | Lightning Bolt#9
+cn:999 [cards] => 0 | 
+cn:999 [prints] => 0 | 
+(t:instant or t:creature) -c:r [cards] => 5 | Delver of Secrets // Insectile Aberration#1, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+(t:instant or t:creature) -c:r [prints] => 5 | Delver of Secrets // Insectile Aberration#1, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+t:instant (c:r or c:u) [cards] => 3 | Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6
+t:instant (c:r or c:u) [prints] => 4 | Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9, Lim-Dûl's Vault#6
+bolt -s:p23 [cards] => 1 | Lightning Bolt#0
+bolt -s:p23 [prints] => 1 | Lightning Bolt#0
+-bolt [cards] => 8 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+-bolt [prints] => 8 | Bonecrusher Giant // Stomp#3, Colorless Rock#7, Delver of Secrets // Insectile Aberration#1, Fire // Ice#2, Lim-Dûl's Vault#6, Little Girl#5, Reversible // Card#4, Weird One#8
+bolt order:name [cards] => 1 | Lightning Bolt#0
+bolt order:name [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+bolt order:released direction:desc [cards] => 1 | Lightning Bolt#0
+bolt order:released direction:desc [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+bolt unique:prints [cards] => 1 | Lightning Bolt#0
+bolt unique:prints [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+c:r unique:prints order:cmc [cards] => 3 | Bonecrusher Giant // Stomp#3, Fire // Ice#2, Lightning Bolt#0
+c:r unique:prints order:cmc [prints] => 4 | Bonecrusher Giant // Stomp#3, Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9
+bolt prefer:newest [cards] => 1 | Lightning Bolt#0
+bolt prefer:newest [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+bolt prefer:oldest [cards] => 1 | Lightning Bolt#0
+bolt prefer:oldest [prints] => 2 | Lightning Bolt#0, Lightning Bolt#9
+t:instant order:cmc direction:asc [cards] => 4 | Fire // Ice#2, Lightning Bolt#0, Lim-Dûl's Vault#6, Weird One#8
+t:instant order:cmc direction:asc [prints] => 5 | Fire // Ice#2, Lightning Bolt#0, Lightning Bolt#9, Lim-Dûl's Vault#6, Weird One#8

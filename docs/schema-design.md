@@ -25,7 +25,7 @@ and mirrored in the `.coqs`. The engine reads layouts from the file; it contains
 **Dialects for what data cannot express.** Some Magic semantics need code (colour subset/superset operators, type-line search,
 `~` substitution in oracle text, mana-value comparison, `is:` shortcuts, `order:`/`unique:`/`prefer:`). They live in a registered
 dialect (`coqc-mtg`) selected by the schema's id; the generic query language handles `field op value`, negation, `or`, parentheses,
-quoted strings and regex, with fields and operator semantics taken from the schema. A schema without a dialect still works.
+quoted strings (regex is not implemented today; it is a new S3 feature), with fields and operator semantics taken from the schema. A schema without a dialect still works.
 
 **Overlays replace prices.** `.coqr` generalises to an overlay (a `.coqd` with the overlay flag): numeric columns attached to rows of one table, own file, own delta,
 refreshed independently (MTG: prices keyed by printing row).
