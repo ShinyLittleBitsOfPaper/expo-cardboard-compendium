@@ -11,6 +11,9 @@ static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 
 fn dispatch(method: &str, args: &str) -> Result<Value, String> {
     let a: Value = if args.is_empty() { json!({}) } else { serde_json::from_str(args).map_err(|e| format!("bad args: {e}"))? };
+    if let Some(r) = crate::files::call(method, &a) {
+        return r; // stateless helpers: no engine (or its lock) needed
+    }
     let mut g = ENGINE.lock().unwrap_or_else(|p| p.into_inner());
     match method {
         "open" => {

@@ -58,6 +58,15 @@ Exit criteria: three consecutive scheduled runs publish verified releases, and a
 chain with hashes matching the full files.
 
 ## Milestone 2: client sync inside the module
+**Status 2026-10-27 (0.0.2-7): logic built and unit-tested; not yet run on a device.** `src/sync/` in the module: `manifest.ts`
+(validation, https-only URLs), `plan.ts` (pure planner), `run.ts` (executor over injected `SyncDeps`), `nativeDeps.ts` (expo-file-system +
+engine helpers; the expo-file-system calls are unverified on a device), `sync.ts` (single-flight `sync()`). Engine gained stateless
+`sha256File`, `unzstFile`, `moveFile` (atomic replace), `removeFile`. 12 `node:test` tests (`npm test` in the module dir) cover first
+install, patch chain + index deltas, idempotence, corrupt patch -> full fallback, tolerated index-delta failure, corrupt full download
+leaving old data untouched, bad index hash, epoch change, `needs_app_update`. Decisions: prices always come as the full `.coqr` for now
+(0.36 MB; patching waits for `applyPriceDelta`, Milestone 3.2); the planner picks the full files when the patch chain would download
+as much as they do; a patch that fails to apply or verify falls back to full; after `changed: true` the app reopens the engine
+(`dataPaths(dir)`) and re-registers its sets. Next: the app-side integration in slbop, and a device test of `sync()`.
 **Decision 3: the module owns download/verify/apply** (TypeScript layer using expo-file-system for downloads; the Rust engine stays free
 of networking/TLS). New API: `sync({manifestUrl, dir})` returns what happened (`up_to_date | patched(n) | full | needs_app_update`).
 Logic: read manifest, compare local stamp/epoch, plan (patch chain if every link is present, else full), download to a temp name,

@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "noUnusedLocals": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "rootDir": "src/sync",
+    "outDir": ".test-out"
+  },
+  "include": ["src/sync/manifest.ts", "src/sync/plan.ts", "src/sync/run.ts", "src/sync/__tests__/*.ts"]
+}

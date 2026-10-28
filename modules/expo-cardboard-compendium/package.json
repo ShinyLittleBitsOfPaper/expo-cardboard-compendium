@@ -21,5 +21,12 @@
     "ios",
     "expo-module.config.json",
     "LICENSE"
-  ]
+  ],
+  "scripts": {
+    "test": "tsc -p tsconfig.test.json && node --test \".test-out/__tests__/*.test.js\""
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2",
+    "@types/node": "^22"
+  }
 }

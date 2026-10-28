@@ -48,6 +48,7 @@ dependencies = [
  "coqc-format",
  "serde_json",
  "sha2",
+ "zstd",
 ]
 
 [[package]]

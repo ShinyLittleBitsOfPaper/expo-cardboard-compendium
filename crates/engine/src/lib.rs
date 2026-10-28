@@ -6,6 +6,7 @@
 //! dataset hash matches, otherwise rebuilt (and the `.coqs` rewritten).
 
 pub mod ffi;
+pub mod files;
 
 use coqc_format::json::{card_json, parse_uuid};
 use coqc_format::search::{coqs, SearchIndex};

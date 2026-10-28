@@ -107,3 +107,42 @@ fn patch_then_index_delta_matches_fresh_build() {
     assert_eq!(e.call("search", &json!({"query": "include:extras"})).unwrap()["total"].as_u64().unwrap(), after);
     assert_eq!(e.info()["index"], "built");
 }
+
+#[test]
+fn file_helpers_hash_and_unzstd() {
+    use sha2::{Digest, Sha256};
+    let dir = tmp("files");
+    std::fs::create_dir_all(&dir).unwrap();
+    let raw: Vec<u8> = (0..300_000u32).flat_map(|i| (i % 251).to_le_bytes()).collect();
+    let want: String = Sha256::digest(&raw).iter().map(|b| format!("{b:02x}")).collect();
+    let (plain, z, out) = (dir.join("a.bin"), dir.join("a.bin.zst"), dir.join("b.bin"));
+    std::fs::write(&plain, &raw).unwrap();
+    std::fs::write(&z, zstd::encode_all(&raw[..], 3).unwrap()).unwrap();
+    // through the JSON ABI, with no engine open
+    let r: serde_json::Value = serde_json::from_str(&coqe::ffi::call_json("sha256File", &format!(r#"{{"path":{:?}}}"#, plain))).unwrap();
+    assert_eq!((r["ok"]["sha256"].as_str().unwrap(), r["ok"]["size"].as_u64().unwrap()), (want.as_str(), raw.len() as u64));
+    let r: serde_json::Value =
+        serde_json::from_str(&coqe::ffi::call_json("unzstFile", &format!(r#"{{"path":{:?},"out":{:?}}}"#, z, out))).unwrap();
+    assert_eq!(r["ok"]["sha256"].as_str().unwrap(), want);
+    assert_eq!(std::fs::read(&out).unwrap(), raw);
+    assert!(!dir.join("b.bin.part").exists());
+    // garbage in: an error, no output file, no leftover .part
+    let bad = dir.join("bad.zst");
+    std::fs::write(&bad, b"not zstd at all").unwrap();
+    let out2 = dir.join("c.bin");
+    let r: serde_json::Value =
+        serde_json::from_str(&coqe::ffi::call_json("unzstFile", &format!(r#"{{"path":{:?},"out":{:?}}}"#, bad, out2))).unwrap();
+    assert!(r["error"].is_string() && !out2.exists() && !dir.join("c.bin.part").exists());
+    let r: serde_json::Value = serde_json::from_str(&coqe::ffi::call_json("sha256File", r#"{"path":"/nonexistent/x"}"#)).unwrap();
+    assert!(r["error"].is_string());
+    // moveFile replaces an existing target; removeFile of a missing file is not an error
+    let (a, b) = (dir.join("m1"), dir.join("m2"));
+    std::fs::write(&a, b"new").unwrap();
+    std::fs::write(&b, b"old").unwrap();
+    let r: serde_json::Value = serde_json::from_str(&coqe::ffi::call_json("moveFile", &format!(r#"{{"from":{:?},"to":{:?}}}"#, a, b))).unwrap();
+    assert!(r["ok"].is_null() && std::fs::read(&b).unwrap() == b"new" && !a.exists());
+    for _ in 0..2 {
+        let r: serde_json::Value = serde_json::from_str(&coqe::ffi::call_json("removeFile", &format!(r#"{{"path":{:?}}}"#, b))).unwrap();
+        assert!(r["ok"].is_null());
+    }
+}

@@ -12,6 +12,7 @@ updates. The only native entry point is the C ABI in `ffi.rs`: `coqe_call(method
 | `getByScryfallId` | `id` | card JSON or `null` |
 | `registerSet` | `name`, `ids[]` | `{resolved, unknown}`; later `search {scope: name}` can only match those printings |
 | `applyPatch` | `path` (.coqp) | replaces the .coqd atomically; index marked `stale` |
+| `sha256File` / `unzstFile` / `moveFile` / `removeFile` | `path` (`out`, `from`/`to`) | stateless (no open engine): streamed SHA-256, zstd decompress to a file, atomic replace, delete (missing is fine); used by `sync()` |
 | `applyIndexDelta` | `path` (.coqsd) | refused unless it targets the current dataset hash; on failure the next search rebuilds |
 | `info` / `close` | | |
 

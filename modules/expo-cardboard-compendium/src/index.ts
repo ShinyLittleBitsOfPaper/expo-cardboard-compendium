@@ -1,7 +1,4 @@
-import { requireNativeModule } from 'expo-modules-core';
-
-// One native entry point: call(method, argsJson) -> '{"ok":...}' | '{"error":"..."}'.
-const Native = requireNativeModule<{ call(method: string, args: string): Promise<string> }>('ExpoCardboardCompendium');
+import { call } from './native';
 
 export type Row = number; // printing row: stable and append-only across patches
 export type Card = Record<string, any>; // Scryfall card JSON
@@ -24,12 +21,6 @@ export interface SearchResult {
   cards?: Card[];
 }
 
-async function call<T>(method: string, args: object = {}): Promise<T> {
-  const r = JSON.parse(await Native.call(method, JSON.stringify(args)));
-  if (r.error !== undefined) throw new Error(r.error);
-  return r.ok as T;
-}
-
 /** Paths are plain filesystem paths (not file:// URIs). `coqs` is created/refreshed if missing or stale. */
 export const open = (coqd: string, coqs?: string) => call<EngineInfo>('open', { coqd, coqs });
 export const close = () => call<null>('close');
@@ -44,3 +35,8 @@ export const registerSet = (name: string, ids: string[]) =>
 export const applyPatch = (path: string) => call<EngineInfo>('applyPatch', { path });
 /** Apply the matching index delta (.coqsd) after applyPatch. If it fails, the index is rebuilt on demand. */
 export const applyIndexDelta = (path: string) => call<EngineInfo>('applyIndexDelta', { path });
+
+// --- Data sync (docs/roadmap.md, Milestone 2) -------------------------------------------------------------------
+export { dataPaths, DEFAULT_MANIFEST_URL } from './sync/run';
+export type { SyncOptions, SyncResult } from './sync/run';
+export { sync } from './sync/sync';
