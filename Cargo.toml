@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/format", "crates/compiler", "crates/engine"]
+members = ["crates/format", "crates/mtg", "crates/compiler", "crates/engine"]
 
 [workspace.package]
 version = "0.0.2"

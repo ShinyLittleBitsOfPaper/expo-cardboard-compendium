@@ -1,6 +1,6 @@
 # Prices (COQR + COQX)
 
-Separate dataset from the cards (`crates/format/src/prices.rs`, `crates/compiler/src/prices.rs`).
+Separate dataset from the cards (`crates/format/src/prices.rs`, `crates/mtg/src/prices.rs`).
 Source: MTGJSON `AllPricesToday` (retail only, paper). v1 columns: TCGplayer USD and Cardmarket EUR x
 normal/foil/etched. Buylists, other providers (cardkingdom, manapool) and history are not stored yet.
 

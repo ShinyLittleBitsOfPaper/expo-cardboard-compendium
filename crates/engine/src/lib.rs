@@ -8,7 +8,7 @@
 pub mod ffi;
 pub mod files;
 
-use coqc_format::json::{card_json, parse_uuid};
+use coqc_format::dialect::Dialect;
 use coqc_format::search::{coqs, SearchIndex};
 use coqc_format::{patch, read, Dataset};
 use serde_json::{json, Value};
@@ -23,7 +23,8 @@ pub struct Engine {
     dsha: [u8; 32],
     /// None = stale (dataset changed since the index was made); rebuilt on the next search
     ix: Option<SearchIndex>,
-    by_id: HashMap<[u8; 16], u32>,
+    by_id: HashMap<Vec<u8>, u32>,
+    dialect: Box<dyn Dialect>,
     sets: HashMap<String, Vec<u32>>,
     index_source: &'static str,
 }
@@ -43,18 +44,26 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-fn load_dataset(path: &Path) -> Result<(Dataset, [u8; 32], HashMap<[u8; 16], u32>), String> {
+type Loaded = (Dataset, [u8; 32], HashMap<Vec<u8>, u32>);
+
+fn load_dataset(path: &Path, dialect: &dyn Dialect) -> Result<Loaded, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let ds = read(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-    let by_id = ds.printings.iter().enumerate().filter(|(_, p)| !p.tombstone).map(|(i, p)| (p.scryfall_id, i as u32)).collect();
+    let by_id = dialect.key_map(&ds);
     Ok((ds, Sha256::digest(&bytes).into(), by_id))
 }
 
 impl Engine {
     /// Open a dataset and (optionally) its `.coqs`. A missing, unreadable or mismatching `.coqs` is rebuilt.
     pub fn open(coqd: &Path, coqs_path: Option<&Path>) -> Result<Engine, String> {
-        let (ds, dsha, by_id) = load_dataset(coqd)?;
+        Self::open_with(coqd, coqs_path, Box::new(coqc_mtg::Mtg))
+    }
+
+    /// Like `open` with an explicit dialect (query syntax, record JSON, key lookup).
+    pub fn open_with(coqd: &Path, coqs_path: Option<&Path>, dialect: Box<dyn Dialect>) -> Result<Engine, String> {
+        let (ds, dsha, by_id) = load_dataset(coqd, dialect.as_ref())?;
         let mut e = Engine {
+            dialect,
             coqd_path: coqd.to_path_buf(), coqs_path: coqs_path.map(Path::to_path_buf),
             ds, dsha, ix: None, by_id, sets: HashMap::new(), index_source: "none",
         };
@@ -86,7 +95,7 @@ impl Engine {
     }
 
     pub fn search(&mut self, query: &str, limit: Option<usize>, offset: usize, scope: Option<&str>) -> Result<Page, String> {
-        let mut q = coqc_format::parse::parse(query).map_err(|e| e.0)?;
+        let mut q = self.dialect.parse_query(query)?;
         q.limit = limit;
         q.offset = offset;
         if let Some(name) = scope {
@@ -99,12 +108,12 @@ impl Engine {
 
     pub fn card(&self, row: u32) -> Option<Value> {
         let p = self.ds.printings.get(row as usize).filter(|p| !p.tombstone)?;
-        let o = self.ds.oracle.get(p.oracle_row as usize)?;
-        Some(card_json(&self.ds.meta, o, &self.ds.ranks[p.oracle_row as usize], p))
+        self.ds.oracle.get(p.oracle_row as usize)?;
+        Some(self.dialect.record_json(&self.ds, row))
     }
 
     pub fn row_of(&self, scryfall_id: &str) -> Option<u32> {
-        self.by_id.get(&parse_uuid(scryfall_id)?).copied()
+        self.by_id.get(&self.dialect.parse_key(scryfall_id)?).copied()
     }
 
     /// Register (or replace) a named scope from Scryfall ids. Returns (resolved, unknown).
@@ -122,7 +131,7 @@ impl Engine {
         let p = std::fs::read(patch_path).map_err(|e| format!("{}: {e}", patch_path.display()))?;
         let new = patch::apply_patch(&old, &p)?;
         write_atomic(&self.coqd_path, &new)?;
-        let (ds, dsha, by_id) = load_dataset(&self.coqd_path)?;
+        let (ds, dsha, by_id) = load_dataset(&self.coqd_path, self.dialect.as_ref())?;
         (self.ds, self.dsha, self.by_id) = (ds, dsha, by_id);
         self.ix = None; // stale until an index delta is applied or the next search rebuilds
         self.index_source = "stale";

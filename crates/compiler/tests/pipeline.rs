@@ -1,5 +1,5 @@
 use coqc::{compile, verify, Id, Options};
-use coqc_format::json::{card_json, parse_uuid};
+use coqc_mtg::json::{card_json, parse_uuid};
 use coqc_format::{read, write, Dataset, Images};
 use std::path::PathBuf;
 

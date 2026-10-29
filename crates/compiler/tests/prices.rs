@@ -47,7 +47,7 @@ fn maps_uuids_and_keeps_only_tcg_and_cardmarket_retail() {
     let (t, r) = table("2026-10-24", 0.5);
     assert_eq!((r.date, r.entries, r.unmapped, r.not_in_cards, r.conflicts), (20261024, 5, 2, 1, 0));
     let ds = cards();
-    let row = |id: &str| ds.printings.iter().position(|p| p.scryfall_id == coqc_format::json::parse_uuid(id).unwrap()).unwrap();
+    let row = |id: &str| ds.printings.iter().position(|p| p.scryfall_id == coqc_mtg::json::parse_uuid(id).unwrap()).unwrap();
     assert_eq!(t.cents(row(BOLT1), 0), Some(50));
     assert_eq!(t.cents(row(BOLT1), 1), Some(250));
     assert_eq!(t.cents(row(BOLT1), 2), None);

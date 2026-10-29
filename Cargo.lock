@@ -34,6 +34,7 @@ name = "coqc"
 version = "0.0.2"
 dependencies = [
  "coqc-format",
+ "coqc-mtg",
  "serde",
  "serde_json",
  "sha2",
@@ -46,6 +47,7 @@ version = "0.0.2"
 dependencies = [
  "coqc",
  "coqc-format",
+ "coqc-mtg",
  "serde_json",
  "sha2",
  "zstd",
@@ -55,6 +57,17 @@ dependencies = [
 name = "coqc-format"
 version = "0.0.2"
 dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "zstd",
+]
+
+[[package]]
+name = "coqc-mtg"
+version = "0.0.2"
+dependencies = [
+ "coqc-format",
  "serde",
  "serde_json",
  "sha2",

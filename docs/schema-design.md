@@ -41,7 +41,7 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
 ## Stages (each ends with all tests green and a bundle)
 - **S0 Lock behaviour.** Golden tests: query results over fixtures and the real 2026-10-27 data, sizes, timings (open ~<1 s, default
   search ~545 ms on the emulator). Audit the claims above.
-- **S1 Boundary without format change.** Move MTG ingestion, query kinds and card JSON behind traits in `coqc-mtg`.
+- **S1 Boundary without format change (done 0.0.2-11: `coqc-mtg` crate holds ingestion, price ingestion, query parser, card JSON, synth; `coqc_format::dialect::Dialect` = parse_query/record_json/key_map/parse_key, the engine takes a boxed dialect (`Engine::open_with`); `coqc` re-exports the old paths; `compile`/`verify`/`breakdown`/`diff_keys` still operate on the fixed oracle/printing `Dataset` until S2; golden + all 45 tests unchanged).** Move MTG ingestion, query kinds and card JSON behind traits in `coqc-mtg`.
 - **S2 Table model + schema block** (coqd v3). MTG expressed as a schema; compile, patch, verify operate over tables.
 - **S3 Generic index and query engine** (coqs v2) with dialect hooks; MTG dialect reproduces today's results exactly.
 - **S4 Overlays, manifest v2, sync and TS API generalised.**

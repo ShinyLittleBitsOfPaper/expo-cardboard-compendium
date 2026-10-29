@@ -199,7 +199,7 @@ fn cmd_inspect(args: &[String]) {
         ds.printings.iter().filter(|r| r.tombstone).count()
     );
     if let Some(po) = ds.printings.iter().find(|r| !r.tombstone) {
-        let card = coqc_format::json::card_json(m, &ds.oracle[po.oracle_row as usize], &ds.ranks[po.oracle_row as usize], po);
+        let card = coqc_mtg::json::card_json(m, &ds.oracle[po.oracle_row as usize], &ds.ranks[po.oracle_row as usize], po);
         println!("sample card (rebuilt):\n{}", serde_json::to_string_pretty(&card).unwrap());
     }
 }
@@ -346,7 +346,7 @@ fn cmd_index_build(args: &[String]) {
     }
     let (mut agree, mut total) = (0, 0);
     for q in ["bolt", "t:creature", "o:flying", "o:\"draw a card\"", "o:\"enters the battlefield\"", "o:ab", "c>=rg mv<=2", "o:destroy t:artifact"] {
-        let query = coqc_format::parse::parse(q).unwrap_or_else(|e| die(&format!("{q}: {e}")));
+        let query = coqc_mtg::parse::parse(q).unwrap_or_else(|e| die(&format!("{q}: {e}")));
         total += 1;
         agree += (ix.search(&query).rows == back.search(&query).rows) as usize;
     }
@@ -414,7 +414,7 @@ fn cmd_search(args: &[String]) {
                 }
                 i += 1;
             }
-            coqc_format::parse::parse(&words.join(" ")).unwrap_or_else(|e| die(&e.0))
+            coqc_mtg::parse::parse(&words.join(" ")).unwrap_or_else(|e| die(&e.0))
         }
     };
     if args.iter().any(|a| a == "--cards") {
@@ -434,7 +434,7 @@ fn cmd_search(args: &[String]) {
         println!(
             "  {:>6}  {} {:<5} {:<5} {}",
             row,
-            p.released_at.map_or("-".into(), |d| coqc_format::json::released_to_string(d)),
+            p.released_at.map_or("-".into(), |d| coqc_mtg::json::released_to_string(d)),
             p.set_code.as_deref().unwrap_or("-"),
             p.collector_number.as_deref().unwrap_or("-"),
             ds.oracle[p.oracle_row as usize].name.as_deref().unwrap_or("?")

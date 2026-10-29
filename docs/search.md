@@ -2,7 +2,7 @@
 
 Code: `crates/format/src/search.rs` (shared by compiler CLI and the future Rust engine).
 CLI: `coqc search <file> <query> [--plan JSON] [--cards] [--limit N] [--offset N]`, `coqc index-stats <file>`.
-Parser: `crates/format/src/parse.rs` (`parse(&str) -> Query`, Scryfall syntax). `compiler/src/quick.rs` is a thin wrapper (drops sort/unique) used by the CLI.
+Parser: `crates/mtg/src/parse.rs` (`parse(&str) -> Query`, Scryfall syntax). `crates/mtg/src/quick.rs` is a thin wrapper (drops sort/unique) used by the CLI.
 
 ## Decisions
 - **The index is derived, never stored or patched.** Built from the records at load (and after a patch);

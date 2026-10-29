@@ -12,6 +12,7 @@ crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
 coqc-format = { path = "../format" }
+coqc-mtg = { path = "../mtg" }
 serde_json = "1"
 sha2 = "0.10"
 zstd = "0.13"

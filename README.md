@@ -51,10 +51,11 @@ See `docs/roadmap.md` for what is planned next (data pipeline, client sync, engi
 
 ## Layout
 
-- `crates/format`: `coqc-format` (records, container, card JSON reconstruction)
+- `crates/format`: `coqc-format` (records, container, patch, search index, `Dialect` trait; no Scryfall knowledge beyond the record types until S2)
+- `crates/mtg`: `coqc-mtg` (the Magic dialect: Scryfall ingestion `ingest.rs`, MTGJSON price ingestion `prices.rs`, Scryfall query syntax `parse.rs`, card JSON `json.rs`, `synth.rs`)
 - `crates/compiler`: `coqc` (library + CLI)
 - `crates/format/src/search.rs`: search index + query plan; `search/coqs.rs`: `.coqs` serialization + deltas (docs/search.md)
-- `crates/format/src/prices.rs`, `crates/compiler/src/prices.rs`: price dataset (docs/prices.md); `scripts/daily-prices.sh`
+- `crates/format/src/prices.rs`, `crates/mtg/src/prices.rs`: price dataset (docs/prices.md); `scripts/daily-prices.sh`
 - `scripts/fetch-bulk.sh`: bulk download with Scryfall-friendly headers; skips when updated_at is unchanged
 - `docs/format.md`: file format spec; `docs/phase0.md`: findings, open questions, next steps
 

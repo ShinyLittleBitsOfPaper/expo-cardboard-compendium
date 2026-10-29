@@ -111,7 +111,7 @@ fn name_punctuation_tilde_reminder_and_prefer() {
     assert_eq!(coqc_format::search::strip_reminder("Flying (It can't be blocked.)\nHaste (Go.) now"), "Flying\nHaste now");
     // unique:cards keeps the newest printing before sorting
     let (_, ix) = setup();
-    let q = coqc_format::parse::parse("!\"lightning bolt\"").unwrap();
+    let q = coqc_mtg::parse::parse("!\"lightning bolt\"").unwrap();
     let r = ix.search(&q);
     assert_eq!(r.rows.len(), 1);
     let all = ix.search(&Query { expr: q.expr.clone(), unique: Unique::Prints, ..Default::default() });
@@ -123,7 +123,7 @@ fn extras_hidden_unless_revealed() {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_a.jsonl");
     let (ds, _) = compile(&p, None, &Options { source_date: 20260701, ..Default::default() }).unwrap();
     let ix = SearchIndex::build(&ds);
-    let count = |q: &str| ix.search(&coqc_format::parse::parse(q).unwrap()).total;
+    let count = |q: &str| ix.search(&coqc_mtg::parse::parse(q).unwrap()).total;
     let hidden = count("");
     let shown = count("include:extras");
     assert!(shown > hidden, "art_series fixture card must be hidden by default ({hidden} vs {shown})");
@@ -141,7 +141,7 @@ fn coqs_round_trip_and_delta() {
     assert_eq!(sha, [7u8; 32]);
     assert_eq!(coqs::serialize(&back, &sha), fa);
     for q in ["bolt", "o:\"3 damage\"", "t:creature -o:damage", "c>=ur", "mv<=1", "s:m11", "include:extras", "!\"fire // ice\""] {
-        let query = coqc_format::parse::parse(q).unwrap();
+        let query = coqc_mtg::parse::parse(q).unwrap();
         assert_eq!(ia.search(&query).rows, back.search(&query).rows, "{q}");
     }
     // corrupt input is rejected, not a panic
