@@ -230,19 +230,7 @@ impl OracleRecord {
                 w.u64(v.to_bits());
             }
         }
-        match &self.faces {
-            None => w.uvarint(0),
-            Some(fs) => {
-                w.uvarint(fs.len() as u64 + 1);
-                for f in fs {
-                    w.opt_str(f.name.as_deref());
-                    w.opt_str(f.mana_cost.as_deref());
-                    w.opt_str(f.type_line.as_deref());
-                    w.opt_str(f.oracle_text.as_deref());
-                    w.opt_str(f.extra.as_deref());
-                }
-            }
-        }
+        encode_oracle_faces(w, &self.faces);
         w.opt_str(self.extra.as_deref());
     }
 
@@ -262,22 +250,7 @@ impl OracleRecord {
             0 => None,
             _ => Some(f64::from_bits(r.u64()?)),
         };
-        let n = r.uvarint()? as usize;
-        let faces = if n == 0 {
-            None
-        } else {
-            let mut fs = Vec::with_capacity(n - 1);
-            for _ in 0..n - 1 {
-                fs.push(OracleFace {
-                    name: r.opt_string()?,
-                    mana_cost: r.opt_string()?,
-                    type_line: r.opt_string()?,
-                    oracle_text: r.opt_string()?,
-                    extra: r.opt_string()?,
-                });
-            }
-            Some(fs)
-        };
+        let faces = decode_oracle_faces(r)?;
         let extra = r.opt_string()?;
         Ok(Self {
             tombstone,
@@ -293,6 +266,68 @@ impl OracleRecord {
             extra,
         })
     }
+}
+
+/// Field encoders shared with the table model: a dialect stores nested structures as opaque `Bytes` columns using these.
+pub fn encode_oracle_faces(w: &mut Writer, faces: &Option<Vec<OracleFace>>) {
+    match faces {
+        None => w.uvarint(0),
+        Some(fs) => {
+            w.uvarint(fs.len() as u64 + 1);
+            for f in fs {
+                w.opt_str(f.name.as_deref());
+                w.opt_str(f.mana_cost.as_deref());
+                w.opt_str(f.type_line.as_deref());
+                w.opt_str(f.oracle_text.as_deref());
+                w.opt_str(f.extra.as_deref());
+            }
+        }
+    }
+}
+
+pub fn decode_oracle_faces(r: &mut Reader) -> Result<Option<Vec<OracleFace>>> {
+    let n = r.uvarint()? as usize;
+    if n == 0 {
+        return Ok(None);
+    }
+    let mut fs = Vec::with_capacity(n - 1);
+    for _ in 0..n - 1 {
+        fs.push(OracleFace {
+            name: r.opt_string()?,
+            mana_cost: r.opt_string()?,
+            type_line: r.opt_string()?,
+            oracle_text: r.opt_string()?,
+            extra: r.opt_string()?,
+        });
+    }
+    Ok(Some(fs))
+}
+
+pub fn encode_printing_faces(w: &mut Writer, faces: &Option<Vec<PrintingFace>>) {
+    match faces {
+        None => w.uvarint(0),
+        Some(fs) => {
+            w.uvarint(fs.len() as u64 + 1);
+            for f in fs {
+                w.opt_str(f.flavor_text.as_deref());
+                w.opt_str(f.artist.as_deref());
+                f.images.encode(w);
+                w.opt_str(f.extra.as_deref());
+            }
+        }
+    }
+}
+
+pub fn decode_printing_faces(r: &mut Reader) -> Result<Option<Vec<PrintingFace>>> {
+    let n = r.uvarint()? as usize;
+    if n == 0 {
+        return Ok(None);
+    }
+    let mut fs = Vec::with_capacity(n - 1);
+    for _ in 0..n - 1 {
+        fs.push(PrintingFace { flavor_text: r.opt_string()?, artist: r.opt_string()?, images: Images::decode(r)?, extra: r.opt_string()? });
+    }
+    Ok(Some(fs))
 }
 
 // -------------------------------------------------------------- printing ---
@@ -311,7 +346,7 @@ pub enum Images {
 }
 
 impl Images {
-    fn encode(&self, w: &mut Writer) {
+    pub fn encode(&self, w: &mut Writer) {
         match self {
             Images::None => w.u8(0),
             Images::Canonical { keys, stamp } => {
@@ -328,7 +363,7 @@ impl Images {
             }
         }
     }
-    fn decode(r: &mut Reader) -> Result<Self> {
+    pub fn decode(r: &mut Reader) -> Result<Self> {
         Ok(match r.u8()? {
             0 => Images::None,
             1 => {
@@ -388,7 +423,7 @@ pub struct PrintingRecord {
     pub extra: Option<String>,
 }
 
-fn encode_nibbles(w: &mut Writer, v: &Option<Vec<u8>>) {
+pub fn encode_nibbles(w: &mut Writer, v: &Option<Vec<u8>>) {
     match v {
         None => w.uvarint(0),
         Some(l) => {
@@ -400,7 +435,7 @@ fn encode_nibbles(w: &mut Writer, v: &Option<Vec<u8>>) {
     }
 }
 
-fn decode_nibbles(r: &mut Reader) -> Result<Option<Vec<u8>>> {
+pub fn decode_nibbles(r: &mut Reader) -> Result<Option<Vec<u8>>> {
     let n = r.uvarint()? as usize;
     if n == 0 {
         return Ok(None);
@@ -486,18 +521,7 @@ impl PrintingRecord {
         w.opt_str(self.flavor_text.as_deref());
         w.opt_str(self.artist.as_deref());
         self.images.encode(w);
-        match &self.faces {
-            None => w.uvarint(0),
-            Some(fs) => {
-                w.uvarint(fs.len() as u64 + 1);
-                for f in fs {
-                    w.opt_str(f.flavor_text.as_deref());
-                    w.opt_str(f.artist.as_deref());
-                    f.images.encode(w);
-                    w.opt_str(f.extra.as_deref());
-                }
-            }
-        }
+        encode_printing_faces(w, &self.faces);
         w.opt_str(self.extra.as_deref());
     }
 
@@ -531,21 +555,7 @@ impl PrintingRecord {
         let flavor_text = r.opt_string()?;
         let artist = r.opt_string()?;
         let images = Images::decode(r)?;
-        let n = r.uvarint()? as usize;
-        let faces = if n == 0 {
-            None
-        } else {
-            let mut fs = Vec::with_capacity(n - 1);
-            for _ in 0..n - 1 {
-                fs.push(PrintingFace {
-                    flavor_text: r.opt_string()?,
-                    artist: r.opt_string()?,
-                    images: Images::decode(r)?,
-                    extra: r.opt_string()?,
-                });
-            }
-            Some(fs)
-        };
+        let faces = decode_printing_faces(r)?;
         let extra = r.opt_string()?;
         Ok(Self {
             tombstone: false,

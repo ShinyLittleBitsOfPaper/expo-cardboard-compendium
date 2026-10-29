@@ -4,7 +4,9 @@ pub mod container;
 pub mod dialect;
 pub mod patch;
 pub mod prices;
+pub mod schema;
 pub mod search;
+pub mod table;
 pub mod types;
 
 pub use codec::{Error, Result};

@@ -7,6 +7,7 @@ pub mod parse;
 pub mod prices;
 pub mod quick;
 pub mod synth;
+pub mod tables;
 
 pub use ingest::*;
 pub use parse::ParseError;

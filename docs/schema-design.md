@@ -42,7 +42,14 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
 - **S0 Lock behaviour.** Golden tests: query results over fixtures and the real 2026-10-27 data, sizes, timings (open ~<1 s, default
   search ~545 ms on the emulator). Audit the claims above.
 - **S1 Boundary without format change (done 0.0.2-11: `coqc-mtg` crate holds ingestion, price ingestion, query parser, card JSON, synth; `coqc_format::dialect::Dialect` = parse_query/record_json/key_map/parse_key, the engine takes a boxed dialect (`Engine::open_with`); `coqc` re-exports the old paths; `compile`/`verify`/`breakdown`/`diff_keys` still operate on the fixed oracle/printing `Dataset` until S2; golden + all 45 tests unchanged).** Move MTG ingestion, query kinds and card JSON behind traits in `coqc-mtg`.
-- **S2 Table model + schema block** (coqd v3). MTG expressed as a schema; compile, patch, verify operate over tables.
+- **S2 Table model + schema block** (coqd v3). MTG expressed as a schema; compile, patch, verify operate over tables. Split in three:
+  - **S2a (done 0.0.2-13, no format change):** `coqc_format::schema` (`Schema`/`TableDef`/`ColumnDef`, column types Str/Int/Float/Bool/Uuid/
+    Enum/Set/Ref/Bytes/Json, index kinds, aliases, `Rel::{None,Parent,Sidecar}`, validation, binary + JSON encodings) and
+    `coqc_format::table` (columnar `Table`, `Store` with `check()`); `coqc_mtg::tables` = `mtg_schema()` + lossless `to_store`/`from_store`.
+    MTG ranks are a sidecar table (one row per oracle row) so volatile numbers stay out of the oracle blocks; faces, images and legalities
+    are opaque `Bytes` columns using the legacy encoders (not searchable, not indexed), which keeps sizes comparable.
+  - **S2b:** container v3 writes/reads the schema block and per-table row blocks from a `Store`; patch/verify/compile move onto it.
+  - **S2c:** delete the legacy `Dataset`/record structs outside `coqc-mtg`, update docs.
 - **S3 Generic index and query engine** (coqs v2) with dialect hooks; MTG dialect reproduces today's results exactly.
 - **S4 Overlays, manifest v2, sync and TS API generalised.**
 - **S5 Proof: a second, non-MTG schema** (a small synthetic dataset) compiled, searched, patched, published offline and synced
