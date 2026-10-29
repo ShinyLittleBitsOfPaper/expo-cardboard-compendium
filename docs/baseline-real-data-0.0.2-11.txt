@@ -1,0 +1,27 @@
+== bolt
+41 matches (index 631 ms, query 0.22 ms)
+real	0m1.145s
+== t:creature
+20328 matches (index 625 ms, query 13.60 ms)
+real	0m1.165s
+== c:rg
+704 matches (index 643 ms, query 0.64 ms)
+real	0m1.144s
+== o:flying
+4793 matches (index 625 ms, query 3.18 ms)
+real	0m1.137s
+== mv>=5
+7559 matches (index 634 ms, query 4.75 ms)
+real	0m1.144s
+== r:mythic
+2965 matches (index 622 ms, query 2.59 ms)
+real	0m1.127s
+== s:lea
+290 matches (index 622 ms, query 1.00 ms)
+real	0m1.129s
+== -t:land
+37848 matches (index 626 ms, query 23.24 ms)
+real	0m1.158s
+== t:legendary t:creature c>=gu
+345 matches (index 627 ms, query 8.34 ms)
+real	0m1.163s

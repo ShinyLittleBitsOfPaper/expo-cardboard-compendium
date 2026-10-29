@@ -23,3 +23,10 @@ emulator). Baseline: 45 tests pass (44 + golden).
   keep exactly these, and `is:`/`f:` are the likely first additions after the generalisation.
 - Not locked: `limdul vault` finds nothing for "Lim-Dul's Vault" (hyphen is not treated as a word break); Scryfall's behaviour here
   should be checked before treating this as a bug.
+
+## Real-data baseline (user's machine, 0.0.2-11, 2026-10-27 data; `docs/baseline-real-data-0.0.2-11.txt`)
+Match counts (the goldens for the MTG dialect; S2/S3 must reproduce them exactly): `bolt` 41, `t:creature` 20328, `c:rg` 704,
+`o:flying` 4793, `mv>=5` 7559, `r:mythic` 2965, `s:lea` 290, `-t:land` 37848, `t:legendary t:creature c>=gu` 345.
+Timings (desktop CLI; "index" = index build/load at CLI start, "query" = the search itself): index ~622-643 ms, queries 0.22-23.2 ms
+(slowest `-t:land` 23 ms, `t:creature` 13.6 ms); whole process ~1.13-1.16 s. Latency budget for S3: query times within +10%.
+Not captured: `coqc verify` result and file sizes (`.coqd`, `.coqs`); still wanted as the +-5% size baseline.
