@@ -1,0 +1,46 @@
+== bolt
+41 matches (index 825 ms, query 0.24 ms)
+real	0m1.555s
+user	0m1.185s
+sys	0m0.340s
+== t:creature
+20328 matches (index 748 ms, query 17.80 ms)
+real	0m1.520s
+user	0m1.193s
+sys	0m0.300s
+== c:rg
+704 matches (index 738 ms, query 0.98 ms)
+real	0m1.442s
+user	0m1.138s
+sys	0m0.291s
+== o:flying
+4793 matches (index 744 ms, query 3.25 ms)
+real	0m1.402s
+user	0m1.165s
+sys	0m0.229s
+== mv>=5
+7559 matches (index 731 ms, query 4.97 ms)
+real	0m1.374s
+user	0m1.071s
+sys	0m0.292s
+== r:mythic
+2965 matches (index 721 ms, query 2.89 ms)
+real	0m1.354s
+user	0m1.049s
+sys	0m0.267s
+== s:lea
+290 matches (index 693 ms, query 2.77 ms)
+real	0m1.327s
+user	0m0.984s
+sys	0m0.332s
+== -t:lan
+d
+15829 matches (index 672 ms, query 14.59 ms)
+real	0m1.350s
+user	0m0.979s
+sys	0m0.352s
+== t:legendary t:creature c>=gu
+345 matches (index 706 ms, query 8.68 ms)
+real	0m1.335s
+user	0m1.067s
+sys	0m0.258s

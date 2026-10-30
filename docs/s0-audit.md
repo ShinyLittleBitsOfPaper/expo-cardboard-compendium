@@ -42,3 +42,11 @@ Note: `coqc index-stats` takes the `.coqd`, not the `.coqs`.
 Sections stored (MB): oracle 3.44 (v2 3.40), oracle_keys 0.75, oracle_ranks 0.17 (v2 0.11), printing 23.20 (v2 23.27), printing_keys 2.28.
 Compile 31.1 s, write 12.9 s; index build 661 ms, reload 26 ms. Not yet run on v3: the 9-query count/timing loop (counts are implied
 by the lossless verify + unchanged golden queries, timings still wanted).
+
+## Real-data query baseline on COQD v3 (user's machine, 0.0.2-15, 2026-10-30; `docs/baseline-real-data-0.0.2-15.txt`)
+Counts identical to the v2 baseline for every query that ran as intended: `bolt` 41, `t:creature` 20328, `c:rg` 704, `o:flying` 4793,
+`mv>=5` 7559, `r:mythic` 2965, `s:lea` 290, `t:legendary t:creature c>=gu` 345. The `-t:land` row (15829) is a paste artifact: the
+terminal wrap put a newline inside the quoted query (`-t:lan` + `d`), so it ran as `-t:lan d`; the real `-t:land` golden stays 37848
+(re-run on a single line before S3 lands). Timings: index build 672-825 ms (first run 825 ms is cold), queries 0.24-17.8 ms
+(`t:creature` 17.8 ms, `-t:lan d` 14.6 ms), process 1.33-1.56 s. Within the +10% budget except the cold first run; v3 changed no index code.
+`coqc verify`: 119695 cards, 0 mismatches (21.2 s). `.coqd` 31,293,682 B, `.coqs` 23,028,224 B.
