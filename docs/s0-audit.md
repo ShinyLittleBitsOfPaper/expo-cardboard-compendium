@@ -36,3 +36,9 @@ Dataset: `cards-202610282106` (2026-10-28 release; the heading above says 10-27 
 meta 0.00 MB, oracle rows 3.40, printing rows 23.27, oracle uuids 0.75, printing uuids 2.28, oracle ranks 0.11. 39,160 oracle rows,
 119,698 printing rows (3 tombstones), 7 dictionaries (promo_types 114, formats 23). Compare against the v3 `coqc inspect` after recompiling.
 Note: `coqc index-stats` takes the `.coqd`, not the `.coqs`.
+
+## Real-data check of COQD v3 (user's machine, 0.0.2-14, recompiled from default-cards.jsonl, 2026-10-30)
+`coqc verify`: 119695 cards, 0 mismatches (21.3 s). `.coqd` 31,293,682 B (v2: 31,266,744 B, +0.09%); `.coqs` 23,028,224 B (v2 23,021,752 B).
+Sections stored (MB): oracle 3.44 (v2 3.40), oracle_keys 0.75, oracle_ranks 0.17 (v2 0.11), printing 23.20 (v2 23.27), printing_keys 2.28.
+Compile 31.1 s, write 12.9 s; index build 661 ms, reload 26 ms. Not yet run on v3: the 9-query count/timing loop (counts are implied
+by the lossless verify + unchanged golden queries, timings still wanted).

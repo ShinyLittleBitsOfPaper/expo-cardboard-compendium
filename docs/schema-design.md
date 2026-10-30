@@ -54,7 +54,8 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
     `to_store`/`into_dataset` (a consuming conversion that moves columns), so search, engine, compile and verify still work on the legacy
     `Dataset` until S2c/S3. v2 files are no longer readable: recompile from the bulk file. The golden size check now counts row+key
     sections only (the embedded schema is a fixed ~1 KB).
-  - **S2c:** delete the legacy `Dataset`/record structs outside `coqc-mtg`, update docs.
+  - **S2c (merged into S3):** deleting the legacy `Dataset`/record structs from `coqc-format` is blocked because `search.rs`/`coqs.rs` still
+    index them; it happens when the index is rebuilt over `Store` in S3. Docs rewrite for v3 goes with it.
 - **S3 Generic index and query engine** (coqs v2) with dialect hooks; MTG dialect reproduces today's results exactly.
 - **S4 Overlays, manifest v2, sync and TS API generalised.**
 - **S5 Proof: a second, non-MTG schema** (a small synthetic dataset) compiled, searched, patched, published offline and synced
