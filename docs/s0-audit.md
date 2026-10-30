@@ -50,3 +50,7 @@ terminal wrap put a newline inside the quoted query (`-t:lan` + `d`), so it ran 
 (re-run on a single line before S3 lands). Timings: index build 672-825 ms (first run 825 ms is cold), queries 0.24-17.8 ms
 (`t:creature` 17.8 ms, `-t:lan d` 14.6 ms), process 1.33-1.56 s. Within the +10% budget except the cold first run; v3 changed no index code.
 `coqc verify`: 119695 cards, 0 mismatches (21.2 s). `.coqd` 31,293,682 B, `.coqs` 23,028,224 B.
+
+### Correction (0.0.2-17): single-line rerun, same data (`docs/baseline-real-data-0.0.2-15.txt` replaced)
+All 9 counts match the v2 baseline, including `-t:land` 37848 (query 24.7 ms). Index build 664-719 ms, queries 0.18-24.7 ms (+-10% of
+v2), process 1.26-1.36 s. `coqc verify` 0 mismatches (20.75 s). COQD v3 is signed off; S3a is next.
