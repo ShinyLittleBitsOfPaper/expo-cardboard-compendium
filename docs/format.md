@@ -1,4 +1,13 @@
-# COQD format, version 2
+# COQD format, version 3 (schema driven)
+
+**Version 3 supersedes everything below** (0.0.2-14, S2b of docs/schema-design.md). The authoritative layout is the header comment
+of `crates/format/src/coqd.rs`: a section directory (`kind`, `arg`, offset, len), a SCHEMA section (tables, typed columns, relations,
+index kinds, aliases), a META section (epoch, source date, dictionaries, props, per-table row counts), and per table a ROWS section
+(256-row zstd blocks; rows are written from the schema) plus, for tables with a natural key, a sorted KEYS section. MTG is the
+`mtg` schema (`oracle`, `oracle_ranks` sidecar, `printing`). Patches are COQP v2 (per-table changed/appended rows). The text below
+describes the retired version 2 and is kept only until the docs are rewritten in S2c.
+
+# COQD format, version 2 (retired)
 
 Little-endian. Strings are `varint length + UTF-8`. Optional values use `0 = absent`.
 

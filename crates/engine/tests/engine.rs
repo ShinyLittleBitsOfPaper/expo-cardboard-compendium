@@ -1,6 +1,6 @@
 use coqc::{compile, Options};
 use coqc_format::search::{coqs, SearchIndex};
-use coqc_format::write;
+use coqc_mtg::write;
 use coqe::Engine;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

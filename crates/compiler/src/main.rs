@@ -1,6 +1,6 @@
 use coqc::{compile, synth, verify, Options, RowOrder};
-use coqc_format::container::{block_table, parse};
-use coqc_format::{read, write, SectionId};
+use coqc_format::coqd::{block_table, parse};
+use coqc_mtg::{read, write};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -83,7 +83,7 @@ fn cmd_compile(args: &[String]) {
     let (ds, st) = compile(Path::new(input), prev.as_ref(), &opts).unwrap_or_else(|e| die(&e));
     let t_compile = t.elapsed();
     if opts.progress {
-        eprintln!("writing dataset (zstd level {}), this takes a while...", coqc_format::container::ZSTD_LEVEL);
+        eprintln!("writing dataset (zstd level {}), this takes a while...", coqc_format::coqd::ZSTD_LEVEL);
     }
     let t = Instant::now();
     let (bytes, sections) = write(&ds).unwrap_or_else(|e| die(&e.to_string()));
@@ -174,11 +174,19 @@ fn cmd_inspect(args: &[String]) {
     let p = parse(&bytes).unwrap_or_else(|e| die(&e.to_string()));
     println!(
         "epoch {}  source_date {}  oracle rows {}  printing rows {}",
-        p.cards_epoch, p.source_date, p.oracle_count, p.printing_count
+        ds.meta.cards_epoch, ds.meta.source_date, ds.oracle.len(), ds.printings.len()
     );
     println!("file {}  sha256 {}", mb(bytes.len() as u64), sha_hex(&bytes));
-    for (id, sec) in &p.sections {
-        println!("  section {id}: {}", mb(sec.len() as u64));
+    let schema = p.schema().unwrap_or_else(|e| die(&e.to_string()));
+    for (kind, arg, sec) in &p.sections {
+        let t = schema.tables.get(*arg as usize).map_or("", |t| t.name.as_str());
+        let name = match kind {
+            1 => "schema".to_string(),
+            2 => "meta".to_string(),
+            3 => format!("rows {t}"),
+            _ => format!("keys {t}"),
+        };
+        println!("  section {name}: {}", mb(sec.len() as u64));
     }
     let m = &ds.meta;
     for (n, d) in [
@@ -211,7 +219,7 @@ fn cmd_diff(args: &[String]) {
     let (a, _) = load(Path::new(&args[0]));
     let (b, _) = load(Path::new(&args[1]));
     let mut total_patch = 0u64;
-    for id in [SectionId::Oracle, SectionId::Printing] {
+    for id in ["oracle", "printing"] {
         let (ta, tb) = (block_table(&a, id).unwrap(), block_table(&b, id).unwrap());
         let mut changed = 0;
         let mut bytes = 0u64;
@@ -223,7 +231,7 @@ fn cmd_diff(args: &[String]) {
         }
         println!(
             "{:<9} blocks {} -> {}  changed/new {} ({:.1}%)  changed bytes {}",
-            id.name(),
+            id,
             ta.len(),
             tb.len(),
             changed,
@@ -259,10 +267,10 @@ fn cmd_patch(args: &[String]) {
     let (a, b) = (std::fs::read(&args[0]).unwrap_or_else(|e| die(&e.to_string())), std::fs::read(&args[1]).unwrap_or_else(|e| die(&e.to_string())));
     let (patch, i) = coqc::patch::make_patch(&a, &b).unwrap_or_else(|e| die(&e));
     std::fs::write(&out, &patch).unwrap_or_else(|e| die(&e.to_string()));
-    println!(
-        "patch {}: {} (raw {}) vs full file {}\n  oracle rows: {} changed, {} appended; printing rows: {} changed, {} appended",
-        out, mb(i.patch_bytes), mb(i.raw_bytes), mb(b.len() as u64), i.oracle_changed, i.oracle_appended, i.printing_changed, i.printing_appended
-    );
+    println!("patch {}: {} (raw {}) vs full file {}", out, mb(i.patch_bytes), mb(i.raw_bytes), mb(b.len() as u64));
+    for (t, changed, appended) in &i.tables {
+        println!("  {t} rows: {changed} changed, {appended} appended");
+    }
 }
 
 fn cmd_apply(args: &[String]) {
@@ -582,7 +590,7 @@ fn cmd_manifest(args: &[String]) {
         force_rebase: args.iter().any(|a| a == "--rebase"),
         cards: NewCards {
             stamp: stamp_of(&cards_p, "cards-"),
-            epoch: parsed.cards_epoch,
+            epoch: parsed.meta().unwrap_or_else(|e| die(&e.to_string())).epoch,
             format,
             min_reader,
             file: measure(&cards_p),

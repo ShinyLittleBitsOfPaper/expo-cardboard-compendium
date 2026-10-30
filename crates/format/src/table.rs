@@ -50,6 +50,45 @@ impl ColData {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Append the empty value (None / zero id); used for tombstoned rows and placeholders.
+    pub fn push_default(&mut self) {
+        match self {
+            Self::Str(v) | Self::Json(v) => v.push(None),
+            Self::Int(v) => v.push(None),
+            Self::Float(v) => v.push(None),
+            Self::Bool(v) => v.push(None),
+            Self::Uuid(v) => v.push([0; 16]),
+            Self::Enum(v) => v.push(None),
+            Self::Set(v) => v.push(None),
+            Self::Ref(v) => v.push(0),
+            Self::Bytes(v) => v.push(None),
+        }
+    }
+    /// Copy `src[j]` into row `i` (`i == len` appends). Both columns must have the same type.
+    pub fn set_from(&mut self, i: usize, src: &ColData, j: usize) {
+        macro_rules! go {
+            ($d:expr, $s:expr) => {{
+                let x = $s[j].clone();
+                if i == $d.len() {
+                    $d.push(x)
+                } else {
+                    $d[i] = x
+                }
+            }};
+        }
+        match (self, src) {
+            (Self::Str(d), Self::Str(s)) | (Self::Json(d), Self::Json(s)) => go!(d, s),
+            (Self::Int(d), Self::Int(s)) => go!(d, s),
+            (Self::Float(d), Self::Float(s)) => go!(d, s),
+            (Self::Bool(d), Self::Bool(s)) => go!(d, s),
+            (Self::Uuid(d), Self::Uuid(s)) => go!(d, s),
+            (Self::Enum(d), Self::Enum(s)) => go!(d, s),
+            (Self::Set(d), Self::Set(s)) => go!(d, s),
+            (Self::Ref(d), Self::Ref(s)) => go!(d, s),
+            (Self::Bytes(d), Self::Bytes(s)) => go!(d, s),
+            _ => panic!("set_from: column type mismatch"),
+        }
+    }
     fn matches(&self, ty: &ColType) -> bool {
         matches!(
             (self, ty),
@@ -81,6 +120,22 @@ impl Table {
     }
     pub fn rows(&self) -> usize {
         self.tomb.len()
+    }
+    /// Append one tombstoned placeholder row.
+    pub fn push_default(&mut self) {
+        self.tomb.push(true);
+        self.cols.iter_mut().for_each(|c| c.push_default());
+    }
+    /// Copy row `j` of `src` into row `i` (`i == rows()` appends).
+    pub fn set_row_from(&mut self, i: usize, src: &Table, j: usize) {
+        if i == self.tomb.len() {
+            self.tomb.push(src.tomb[j]);
+        } else {
+            self.tomb[i] = src.tomb[j];
+        }
+        for (d, s) in self.cols.iter_mut().zip(&src.cols) {
+            d.set_from(i, s, j);
+        }
     }
 }
 

@@ -10,7 +10,8 @@ pub mod files;
 
 use coqc_format::dialect::Dialect;
 use coqc_format::search::{coqs, SearchIndex};
-use coqc_format::{patch, read, Dataset};
+use coqc_format::{patch, Dataset};
+use coqc_mtg::read;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

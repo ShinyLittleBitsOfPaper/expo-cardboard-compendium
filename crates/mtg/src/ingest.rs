@@ -958,7 +958,7 @@ pub struct KeyStat {
 /// For the 12 most expensive keys it also measures how many oracle cards have the
 /// same value on every printing (candidates to store once on the oracle record).
 pub fn breakdown(ds: &Dataset) -> Result<BTreeMap<String, KeyStat>, String> {
-    let level = coqc_format::container::ZSTD_LEVEL;
+    let level = coqc_format::coqd::ZSTD_LEVEL;
     let mut bufs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut total: BTreeMap<String, KeyStat> = BTreeMap::new();
     let mut flush = |bufs: &mut BTreeMap<String, Vec<u8>>| -> Result<(), String> {

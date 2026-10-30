@@ -52,7 +52,7 @@ See `docs/roadmap.md` for what is planned next (data pipeline, client sync, engi
 ## Layout
 
 - `crates/format`: `coqc-format` (records, container, patch, search index, `Dialect` trait; no Scryfall knowledge beyond the record types until S2)
-- `crates/format/src/schema.rs`, `table.rs`: generic schema + columnar table store (S2a; the container does not use them yet)
+- `crates/format/src/schema.rs`, `table.rs`, `coqd.rs`: generic schema, columnar table store, and the COQD v3 container (`coqd.rs` header documents the layout); `patch.rs`: COQP v2 row patches over stores
 - `crates/mtg`: `coqc-mtg` (the Magic dialect: Scryfall ingestion `ingest.rs`, MTGJSON price ingestion `prices.rs`, Scryfall query syntax `parse.rs`, card JSON `json.rs`, `synth.rs`)
 - `crates/compiler`: `coqc` (library + CLI)
 - `crates/format/src/search.rs`: search index + query plan; `search/coqs.rs`: `.coqs` serialization + deltas (docs/search.md)

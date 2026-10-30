@@ -19,7 +19,9 @@ const QUERIES: &[&str] = &[
 fn run() -> (String, usize) {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_a.jsonl");
     let (ds, _) = compile(&p, None, &Options { source_date: 20260701, skip_digital: true, skip_art_series: true, ..Default::default() }).unwrap();
-    let size = coqc_format::container::write(&ds).unwrap().0.len();
+    // Row and key sections only: the embedded schema is a fixed ~1 KB that would dominate this 14-row fixture.
+    let (_, stats) = coqc_mtg::write(&ds).unwrap();
+    let size = stats.iter().filter(|s| s.name != "schema" && s.name != "meta").map(|s| s.stored_bytes as usize).sum::<usize>();
     let ix = SearchIndex::build(&ds);
     let mut out = String::new();
     for q in QUERIES {
@@ -55,5 +57,5 @@ fn queries_and_size_match_golden() {
     assert_eq!(out, want, "search results changed");
     let want_size: f64 = std::fs::read_to_string(&sf).unwrap().trim().parse().unwrap();
     let ratio = size as f64 / want_size;
-    assert!((0.95..=1.05).contains(&ratio), "container size {size} vs golden {want_size} (outside +-5%)");
+    assert!((0.95..=1.05).contains(&ratio), "row+key section size {size} vs golden {want_size} (outside +-5%)");
 }

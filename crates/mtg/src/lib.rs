@@ -11,6 +11,7 @@ pub mod tables;
 
 pub use ingest::*;
 pub use parse::ParseError;
+pub use tables::{read, write};
 
 use coqc_format::search::Query;
 use coqc_format::{Dataset, Meta, OracleRecord, PrintingRecord, Ranks};

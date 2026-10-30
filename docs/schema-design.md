@@ -48,7 +48,12 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
     `coqc_format::table` (columnar `Table`, `Store` with `check()`); `coqc_mtg::tables` = `mtg_schema()` + lossless `to_store`/`from_store`.
     MTG ranks are a sidecar table (one row per oracle row) so volatile numbers stay out of the oracle blocks; faces, images and legalities
     are opaque `Bytes` columns using the legacy encoders (not searchable, not indexed), which keeps sizes comparable.
-  - **S2b:** container v3 writes/reads the schema block and per-table row blocks from a `Store`; patch/verify/compile move onto it.
+  - **S2b (done 0.0.2-14):** `coqc_format::coqd` = COQD v3 (schema + meta + per-table row blocks + key sections, row bytes driven by
+    the schema; Bool columns packed into the flags varint), `read_store`/`write_store`, `block_table(bytes, table)`; `patch.rs` is COQP v2 over
+    stores (per-table changed/appended rows, schema must match); the v2 container code was deleted. `coqc_mtg::{read, write}` wrap
+    `to_store`/`into_dataset` (a consuming conversion that moves columns), so search, engine, compile and verify still work on the legacy
+    `Dataset` until S2c/S3. v2 files are no longer readable: recompile from the bulk file. The golden size check now counts row+key
+    sections only (the embedded schema is a fixed ~1 KB).
   - **S2c:** delete the legacy `Dataset`/record structs outside `coqc-mtg`, update docs.
 - **S3 Generic index and query engine** (coqs v2) with dialect hooks; MTG dialect reproduces today's results exactly.
 - **S4 Overlays, manifest v2, sync and TS API generalised.**

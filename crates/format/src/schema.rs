@@ -118,6 +118,9 @@ impl Schema {
                     _ => {}
                 }
             }
+            if t.columns.iter().filter(|c| c.ty == ColType::Bool).count() > 30 {
+                return Err(format!("{}: at most 30 Bool columns", t.name));
+            }
             if let Some(k) = &t.key {
                 match t.columns.iter().find(|c| &c.name == k) {
                     Some(c) if c.ty == ColType::Uuid => {}

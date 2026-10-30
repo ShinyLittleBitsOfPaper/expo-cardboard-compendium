@@ -147,21 +147,20 @@ fn opt_dec<T>(b: &Option<Vec<u8>>, f: impl FnOnce(&mut Reader) -> Result<T>) -> 
     b.as_ref().map(|b| f(&mut Reader::new(b))).transpose()
 }
 
+/// Borrowing convenience for tests and tools; clones the store. Prefer [`into_dataset`] on the load path.
 pub fn from_store(st: &Store) -> Result<Dataset> {
+    into_dataset(st.clone())
+}
+
+/// Consuming conversion: moves every column into the legacy records instead of cloning it.
+pub fn into_dataset(mut st: Store) -> Result<Dataset> {
     if st.schema != mtg_schema() {
         return Err(Error::Corrupt("not the MTG schema"));
     }
     st.check().map_err(|_| Error::Corrupt("inconsistent store"))?;
-    macro_rules! col {
-        ($t:expr, $i:expr, $v:ident) => {
-            match &st.tables[$t].cols[$i] {
-                ColData::$v(v) => v,
-                _ => return Err(Error::Corrupt("column type")),
-            }
-        };
-    }
     let mut meta = Meta { cards_epoch: st.epoch, source_date: st.source_date, ..Default::default() };
-    let mut d = st.dicts.iter().cloned();
+    meta.dropped_keys = st.prop("dropped_keys").map(|v| v.to_vec()).unwrap_or_default();
+    let mut d = std::mem::take(&mut st.dicts).into_iter();
     meta.layouts = d.next().unwrap();
     meta.rarities = d.next().unwrap();
     meta.border_colors = d.next().unwrap();
@@ -169,65 +168,96 @@ pub fn from_store(st: &Store) -> Result<Dataset> {
     meta.promo_types = d.next().unwrap();
     meta.image_keys = d.next().unwrap();
     meta.formats = d.next().unwrap();
-    meta.dropped_keys = st.prop("dropped_keys").map(|v| v.to_vec()).unwrap_or_default();
 
-    let ot = &st.tables[0];
-    let mut oracle = Vec::with_capacity(ot.rows());
-    for i in 0..ot.rows() {
-        let id = col!(0, 0, Uuid)[i];
-        if ot.tomb[i] {
-            oracle.push(OracleRecord::tombstone(id));
-            continue;
-        }
-        oracle.push(OracleRecord {
-            tombstone: false,
-            oracle_id: id,
-            name: col!(0, 1, Str)[i].clone(),
-            mana_cost: col!(0, 2, Str)[i].clone(),
-            type_line: col!(0, 3, Str)[i].clone(),
-            oracle_text: col!(0, 4, Str)[i].clone(),
-            colors: col!(0, 5, Int)[i].map(|x| x as u8),
-            color_identity: col!(0, 6, Int)[i].map(|x| x as u8),
-            cmc: col!(0, 7, Float)[i],
-            faces: opt_dec(&col!(0, 8, Bytes)[i], decode_oracle_faces)?.flatten(),
-            extra: col!(0, 9, Json)[i].clone(),
+    macro_rules! take {
+        ($t:expr, $i:expr, $v:ident) => {
+            match std::mem::replace(&mut st.tables[$t].cols[$i], ColData::Ref(vec![])) {
+                ColData::$v(v) => v.into_iter(),
+                _ => return Err(Error::Corrupt("column type")),
+            }
+        };
+    }
+    let o_rows = st.tables[0].rows();
+    let o_tomb = st.tables[0].tomb.clone();
+    let (mut id, mut name, mut mana, mut tline, mut otext) = (take!(0, 0, Uuid), take!(0, 1, Str), take!(0, 2, Str), take!(0, 3, Str), take!(0, 4, Str));
+    let (mut colors, mut ci, mut cmc, mut faces, mut extra) = (take!(0, 5, Int), take!(0, 6, Int), take!(0, 7, Float), take!(0, 8, Bytes), take!(0, 9, Json));
+    let mut oracle = Vec::with_capacity(o_rows);
+    for tomb in o_tomb {
+        let (id, name, mana, tline, otext) = (id.next().unwrap(), name.next().unwrap(), mana.next().unwrap(), tline.next().unwrap(), otext.next().unwrap());
+        let (colors, ci, cmc, faces, extra) = (colors.next().unwrap(), ci.next().unwrap(), cmc.next().unwrap(), faces.next().unwrap(), extra.next().unwrap());
+        oracle.push(if tomb {
+            OracleRecord::tombstone(id)
+        } else {
+            OracleRecord {
+                tombstone: false,
+                oracle_id: id,
+                name,
+                mana_cost: mana,
+                type_line: tline,
+                oracle_text: otext,
+                colors: colors.map(|x| x as u8),
+                color_identity: ci.map(|x| x as u8),
+                cmc,
+                faces: opt_dec(&faces, decode_oracle_faces)?.flatten(),
+                extra,
+            }
         });
     }
-    let (edhrec, penny) = (col!(1, 0, Int), col!(1, 1, Int));
-    let ranks = (0..st.tables[1].rows()).map(|i| Ranks { edhrec: edhrec[i].map(|x| x as u32), penny: penny[i].map(|x| x as u32) }).collect();
+    let (edhrec, penny) = (take!(1, 0, Int), take!(1, 1, Int));
+    let ranks = edhrec.zip(penny).map(|(a, b)| Ranks { edhrec: a.map(|x| x as u32), penny: b.map(|x| x as u32) }).collect();
 
-    let pt = &st.tables[2];
-    let mut printings = Vec::with_capacity(pt.rows());
-    for i in 0..pt.rows() {
-        let id = col!(2, 0, Uuid)[i];
-        if pt.tomb[i] {
-            printings.push(PrintingRecord::tombstone(id));
-            continue;
-        }
-        printings.push(PrintingRecord {
-            tombstone: false,
-            scryfall_id: id,
-            oracle_row: col!(2, 1, Ref)[i],
-            layout: col!(2, 2, Enum)[i],
-            lang: col!(2, 3, Enum)[i],
-            released_at: col!(2, 4, Int)[i].map(|x| x as u32),
-            set_code: col!(2, 5, Str)[i].clone(),
-            set_name: col!(2, 6, Str)[i].clone(),
-            collector_number: col!(2, 7, Str)[i].clone(),
-            rarity: col!(2, 8, Enum)[i],
-            border_color: col!(2, 9, Enum)[i],
-            promo: col!(2, 10, Bool)[i],
-            reprint: col!(2, 11, Bool)[i],
-            digital: col!(2, 12, Bool)[i],
-            finishes: col!(2, 13, Int)[i].map(|x| x as u8),
-            promo_types: col!(2, 14, Set)[i].clone(),
-            legalities: opt_dec(&col!(2, 15, Bytes)[i], decode_nibbles)?.flatten(),
-            flavor_text: col!(2, 16, Str)[i].clone(),
-            artist: col!(2, 17, Str)[i].clone(),
-            images: opt_dec(&col!(2, 18, Bytes)[i], Images::decode)?.unwrap_or(Images::None),
-            faces: opt_dec(&col!(2, 19, Bytes)[i], decode_printing_faces)?.flatten(),
-            extra: col!(2, 20, Json)[i].clone(),
+    let p_rows = st.tables[2].rows();
+    let p_tomb = st.tables[2].tomb.clone();
+    let (mut id, mut orow, mut layout, mut lang, mut rel) = (take!(2, 0, Uuid), take!(2, 1, Ref), take!(2, 2, Enum), take!(2, 3, Enum), take!(2, 4, Int));
+    let (mut scode, mut sname, mut cn, mut rarity, mut border) = (take!(2, 5, Str), take!(2, 6, Str), take!(2, 7, Str), take!(2, 8, Enum), take!(2, 9, Enum));
+    let (mut promo, mut reprint, mut digital, mut fin, mut ptypes) = (take!(2, 10, Bool), take!(2, 11, Bool), take!(2, 12, Bool), take!(2, 13, Int), take!(2, 14, Set));
+    let (mut legal, mut flavor, mut artist, mut images, mut pfaces, mut pextra) =
+        (take!(2, 15, Bytes), take!(2, 16, Str), take!(2, 17, Str), take!(2, 18, Bytes), take!(2, 19, Bytes), take!(2, 20, Json));
+    let mut printings = Vec::with_capacity(p_rows);
+    for tomb in p_tomb {
+        let (id, orow, layout, lang, rel) = (id.next().unwrap(), orow.next().unwrap(), layout.next().unwrap(), lang.next().unwrap(), rel.next().unwrap());
+        let (scode, sname, cn, rarity, border) = (scode.next().unwrap(), sname.next().unwrap(), cn.next().unwrap(), rarity.next().unwrap(), border.next().unwrap());
+        let (promo, reprint, digital, fin, ptypes) = (promo.next().unwrap(), reprint.next().unwrap(), digital.next().unwrap(), fin.next().unwrap(), ptypes.next().unwrap());
+        let (legal, flavor, artist, images, pfaces, pextra) =
+            (legal.next().unwrap(), flavor.next().unwrap(), artist.next().unwrap(), images.next().unwrap(), pfaces.next().unwrap(), pextra.next().unwrap());
+        printings.push(if tomb {
+            PrintingRecord::tombstone(id)
+        } else {
+            PrintingRecord {
+                tombstone: false,
+                scryfall_id: id,
+                oracle_row: orow,
+                layout,
+                lang,
+                released_at: rel.map(|x| x as u32),
+                set_code: scode,
+                set_name: sname,
+                collector_number: cn,
+                rarity,
+                border_color: border,
+                promo,
+                reprint,
+                digital,
+                finishes: fin.map(|x| x as u8),
+                promo_types: ptypes,
+                legalities: opt_dec(&legal, decode_nibbles)?.flatten(),
+                flavor_text: flavor,
+                artist,
+                images: opt_dec(&images, Images::decode)?.unwrap_or(Images::None),
+                faces: opt_dec(&pfaces, decode_printing_faces)?.flatten(),
+                extra: pextra,
+            }
         });
     }
     Ok(Dataset { meta, oracle, ranks, printings })
+}
+
+/// Write a dataset as COQD v3 (MTG schema).
+pub fn write(ds: &Dataset) -> Result<(Vec<u8>, Vec<SectionStat>)> {
+    write_store(&to_store(ds))
+}
+
+/// Read a COQD v3 file written with the MTG schema.
+pub fn read(bytes: &[u8]) -> Result<Dataset> {
+    into_dataset(read_store(bytes)?)
 }

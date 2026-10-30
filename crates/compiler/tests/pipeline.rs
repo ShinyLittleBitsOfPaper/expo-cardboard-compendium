@@ -1,6 +1,7 @@
 use coqc::{compile, verify, Id, Options};
 use coqc_mtg::json::{card_json, parse_uuid};
-use coqc_format::{read, write, Dataset, Images};
+use coqc_format::{Dataset, Images};
+use coqc_mtg::{read, write};
 use std::path::PathBuf;
 
 fn fx(name: &str) -> PathBuf {
@@ -215,8 +216,8 @@ fn patch_apply_reproduces_the_new_file_exactly() {
     let (b, _) = compile(&fx("sample_b.jsonl"), Some(&a), &opts()).unwrap();
     let (ab, bb) = (write(&a).unwrap().0, write(&b).unwrap().0);
     let (patch, info) = coqc::patch::make_patch(&ab, &bb).unwrap();
-    assert_eq!(info.printing_appended, 2);
-    assert_eq!(info.oracle_appended, 1);
+    assert_eq!(info.appended("printing"), 2);
+    assert_eq!(info.appended("oracle"), 1);
     let out = coqc::patch::apply_patch(&ab, &patch).unwrap();
     assert_eq!(out, bb);
     // wrong base and tampered patches are rejected

@@ -55,3 +55,33 @@ fn store_check_catches_corruption() {
     }
     assert!(st.check().is_err());
 }
+
+#[test]
+fn v3_file_roundtrips_tombstones_and_is_deterministic() {
+    let mut d = ds();
+    let n = d.printings.len();
+    d.printings.push(coqc_format::PrintingRecord::tombstone([7; 16]));
+    d.printings.push(coqc_format::PrintingRecord { scryfall_id: [9; 16], oracle_row: 0, ..d.printings[0].clone() });
+    let (a, stats) = coqc_mtg::write(&d).unwrap();
+    assert_eq!(a, coqc_mtg::write(&d).unwrap().0);
+    assert!(stats.iter().any(|s| s.name == "printing_keys") && !stats.iter().any(|s| s.name == "oracle_ranks_keys"));
+    let back = coqc_mtg::read(&a).unwrap();
+    assert_eq!(back.printings, d.printings);
+    assert!(back.printings[n].tombstone && back.printings[n].scryfall_id == [7; 16]);
+    assert_eq!(&a[..4], b"COQD");
+    assert_eq!(u16::from_le_bytes([a[4], a[5]]), 3);
+}
+
+#[test]
+fn patch_carries_changed_tombstoned_and_appended_rows() {
+    let old = ds();
+    let mut new = old.clone();
+    new.printings[0].artist = Some("Someone Else".into());
+    new.printings[1] = coqc_format::PrintingRecord::tombstone(new.printings[1].scryfall_id);
+    new.ranks[0].edhrec = Some(1);
+    new.printings.push(coqc_format::PrintingRecord { scryfall_id: [9; 16], ..new.printings[0].clone() });
+    let (ob, nb) = (coqc_mtg::write(&old).unwrap().0, coqc_mtg::write(&new).unwrap().0);
+    let (patch, info) = coqc_format::patch::make_patch(&ob, &nb).unwrap();
+    assert_eq!((info.changed("printing"), info.appended("printing"), info.changed("oracle_ranks")), (2, 1, 1));
+    assert_eq!(coqc_format::patch::apply_patch(&ob, &patch).unwrap(), nb);
+}

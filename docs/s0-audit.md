@@ -31,3 +31,8 @@ Timings (desktop CLI; "index" = index build/load at CLI start, "query" = the sea
 (slowest `-t:land` 23 ms, `t:creature` 13.6 ms); whole process ~1.13-1.16 s. Latency budget for S3: query times within +10%.
 Dataset: `cards-202610282106` (2026-10-28 release; the heading above says 10-27 by mistake). `coqc verify` against `default-cards.jsonl`:
 119695 cards, 0 mismatches (11.4 s). Sizes: `.coqd` 31,266,744 B, `.coqs` 23,021,752 B (the +-5% size baseline for S2b/S3).
+
+## Real-data section sizes, v2 file (`coqc inspect`, 0.0.2-13, cards-202610282106, 29.82 MB = 31,266,744 B)
+meta 0.00 MB, oracle rows 3.40, printing rows 23.27, oracle uuids 0.75, printing uuids 2.28, oracle ranks 0.11. 39,160 oracle rows,
+119,698 printing rows (3 tombstones), 7 dictionaries (promo_types 114, formats 23). Compare against the v3 `coqc inspect` after recompiling.
+Note: `coqc index-stats` takes the `.coqd`, not the `.coqs`.

@@ -49,13 +49,13 @@ impl Dict {
     pub fn values(&self) -> &[String] {
         &self.values
     }
-    fn encode(&self, w: &mut Writer) {
+    pub fn encode(&self, w: &mut Writer) {
         w.uvarint(self.values.len() as u64);
         for v in &self.values {
             w.str(v);
         }
     }
-    fn decode(r: &mut Reader) -> Result<Self> {
+    pub fn decode(r: &mut Reader) -> Result<Self> {
         let n = r.uvarint()? as usize;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
