@@ -180,14 +180,14 @@ fn fold_char(c: char, out: &mut String) {
 
 /// Generic referents modern Oracle text uses instead of the card name ("This land enters tapped.").
 /// Verified on Scryfall: `o:"~ enters tapped"` matches such cards.
-const THIS_WORDS: &[&str] = &[
+pub const THIS_WORDS: &[&str] = &[
     "creature", "land", "artifact", "enchantment", "permanent", "planeswalker", "battle", "spell", "card", "vehicle",
     "saga", "aura", "equipment", "class", "token", "attraction", "case", "room", "siege", "background", "contraption",
     "omen", "spacecraft", "planet", "emblem", "dungeon",
 ];
 
 /// Cartesian substitution of every `~` (the gaps between `parts`) with each variant.
-fn expand_tilde(parts: &[&str], variants: &[String]) -> Vec<String> {
+pub fn expand_tilde(parts: &[&str], variants: &[String]) -> Vec<String> {
     let mut out = vec![parts[0].to_string()];
     for p in &parts[1..] {
         out = out.iter().flat_map(|o| variants.iter().map(move |v| format!("{o}{v}{p}"))).collect();
@@ -199,7 +199,7 @@ fn expand_tilde(parts: &[&str], variants: &[String]) -> Vec<String> {
 }
 
 /// `"set_type":"<v>"` out of a printing's residual JSON text (no full parse; values are plain ASCII words).
-fn json_str_field_set_type(extra: &str) -> Option<&str> {
+pub fn json_str_field_set_type(extra: &str) -> Option<&str> {
     let i = extra.find("\"set_type\":\"")? + 12;
     let rest = &extra[i..];
     Some(&rest[..rest.find('"')?])
@@ -236,35 +236,35 @@ pub fn fold(s: &str) -> String {
 // ----------------------------------------------------------------- bitsets ---
 
 #[derive(Clone, Debug)]
-struct Bits {
+pub struct Bits {
     w: Vec<u64>,
 }
 
 impl Bits {
-    fn new(n: usize) -> Self {
+    pub fn new(n: usize) -> Self {
         Self { w: vec![0; n.div_ceil(64)] }
     }
-    fn set(&mut self, i: usize) {
+    pub fn set(&mut self, i: usize) {
         self.w[i >> 6] |= 1 << (i & 63);
     }
-    fn get(&self, i: usize) -> bool {
+    pub fn get(&self, i: usize) -> bool {
         self.w[i >> 6] >> (i & 63) & 1 == 1
     }
-    fn and(&mut self, o: &Bits) {
+    pub fn and(&mut self, o: &Bits) {
         self.w.iter_mut().zip(&o.w).for_each(|(a, b)| *a &= *b);
     }
-    fn or(&mut self, o: &Bits) {
+    pub fn or(&mut self, o: &Bits) {
         self.w.iter_mut().zip(&o.w).for_each(|(a, b)| *a |= *b);
     }
-    fn clear(&mut self, o: &Bits) {
+    pub fn clear(&mut self, o: &Bits) {
         for (a, b) in self.w.iter_mut().zip(&o.w) {
             *a &= !*b;
         }
     }
-    fn not_within(&mut self, universe: &Bits) {
+    pub fn not_within(&mut self, universe: &Bits) {
         self.w.iter_mut().zip(&universe.w).for_each(|(a, u)| *a = !*a & *u);
     }
-    fn ones(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn ones(&self) -> impl Iterator<Item = usize> + '_ {
         self.w.iter().enumerate().flat_map(|(wi, &word)| {
             let mut x = word;
             std::iter::from_fn(move || {
@@ -284,27 +284,27 @@ impl Bits {
 
 /// Text kept in one arena; `off[i]..off[i+1]` is row i.
 #[derive(Default)]
-struct Arena {
+pub struct Arena {
     text: String,
     off: Vec<u32>,
 }
 
 impl Arena {
-    fn push(&mut self, s: &str) {
+    pub fn push(&mut self, s: &str) {
         self.text.push_str(s);
         self.off.push(self.text.len() as u32);
     }
-    fn get(&self, i: usize) -> &str {
+    pub fn get(&self, i: usize) -> &str {
         let a = if i == 0 { 0 } else { self.off[i - 1] } as usize;
         &self.text[a..self.off[i] as usize]
     }
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.off.len()
     }
 }
 
 #[derive(Default)]
-struct Trigrams {
+pub struct Trigrams {
     /// sorted gram keys; `start[i]..start[i+1]` is the postings range in `post`
     keys: Vec<u32>,
     start: Vec<u32>,
@@ -327,7 +327,7 @@ fn put_varint(out: &mut Vec<u8>, mut v: u32) {
 }
 
 impl Trigrams {
-    fn build(arena: &Arena, live: impl Fn(usize) -> bool, stop_fraction: f64, stop_min: usize) -> Self {
+    pub fn build(arena: &Arena, live: impl Fn(usize) -> bool, stop_fraction: f64, stop_min: usize) -> Self {
         let n = arena.len();
         let mut pairs: Vec<(u32, u32)> = Vec::new();
         let mut row: Vec<u32> = Vec::new();
@@ -396,7 +396,7 @@ impl Trigrams {
     }
 
     /// Rows whose text contains `needle`, using trigrams to narrow and verifying against the text.
-    fn find(&self, arena: &Arena, live: &dyn Fn(usize) -> bool, needle: &str) -> Vec<u32> {
+    pub fn find(&self, arena: &Arena, live: &dyn Fn(usize) -> bool, needle: &str) -> Vec<u32> {
         let nb = needle.as_bytes();
         let mut lists: Vec<Vec<u32>> = Vec::new();
         if nb.len() >= 3 {
@@ -497,7 +497,7 @@ fn mask_from_json(v: &serde_json::Value) -> Option<u8> {
 
 /// Typed mask, else the key kept in `extra` (non-canonical order is stored there), else (colors only)
 /// the union of the faces' colors, else 0.
-fn oracle_mask(o: &OracleRecord, typed: Option<u8>, key: &str, faces: bool) -> u8 {
+pub fn oracle_mask(o: &OracleRecord, typed: Option<u8>, key: &str, faces: bool) -> u8 {
     if let Some(m) = typed {
         return m;
     }
@@ -516,7 +516,7 @@ fn oracle_mask(o: &OracleRecord, typed: Option<u8>, key: &str, faces: bool) -> u
     }
 }
 
-fn faces_color_union(o: &OracleRecord) -> Option<u8> {
+pub fn faces_color_union(o: &OracleRecord) -> Option<u8> {
     let mut m = 0u8;
     let mut any = false;
     for f in o.faces.iter().flatten() {
@@ -533,7 +533,7 @@ fn faces_color_union(o: &OracleRecord) -> Option<u8> {
 }
 
 /// WUBRG bit (same order as the file's color masks).
-fn color_bit(c: char) -> u8 {
+pub fn color_bit(c: char) -> u8 {
     match c.to_ascii_uppercase() {
         'W' => 1,
         'U' => 2,
@@ -544,7 +544,7 @@ fn color_bit(c: char) -> u8 {
     }
 }
 
-fn join_faces(top: &Option<String>, faces: &Option<Vec<crate::types::OracleFace>>, get: impl Fn(&crate::types::OracleFace) -> &Option<String>) -> String {
+pub fn join_faces(top: &Option<String>, faces: &Option<Vec<crate::types::OracleFace>>, get: impl Fn(&crate::types::OracleFace) -> &Option<String>) -> String {
     if let Some(t) = top {
         return t.clone();
     }
@@ -560,7 +560,7 @@ fn join_faces(top: &Option<String>, faces: &Option<Vec<crate::types::OracleFace>
     s
 }
 
-fn rarity_rank(s: &str) -> Option<u8> {
+pub fn rarity_rank(s: &str) -> Option<u8> {
     match s {
         "common" => Some(0),
         "uncommon" => Some(1),
@@ -888,7 +888,7 @@ impl SearchIndex {
 }
 
 
-fn mask_of(s: &str) -> u8 {
+pub fn mask_of(s: &str) -> u8 {
     s.chars().fold(0, |m, c| m | color_bit(c))
 }
 
@@ -904,7 +904,7 @@ fn mask_cmp(a: u8, b: u8, op: Op) -> bool {
     }
 }
 
-fn num_cmp(a: f64, b: f64, op: Op) -> bool {
+pub fn num_cmp(a: f64, b: f64, op: Op) -> bool {
     match op {
         Op::Colon | Op::Eq => a == b,
         Op::Ne => a != b,

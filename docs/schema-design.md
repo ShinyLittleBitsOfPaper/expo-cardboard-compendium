@@ -57,7 +57,7 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
   - **S2c (merged into S3):** deleting the legacy `Dataset`/record structs from `coqc-format` is blocked because `search.rs`/`coqs.rs` still
     index them; it happens when the index is rebuilt over `Store` in S3. Docs rewrite for v3 goes with it.
 - **S3 Generic index and query engine** (coqs v2) with dialect hooks; MTG dialect reproduces today's results exactly.
-  Detailed design and stage split (S3a-S3d) in `docs/s3-design.md` (0.0.2-16).
+  Detailed design and stage split (S3a-S3d) in `docs/s3-design.md` (0.0.2-16). **S3a done 0.0.2-18** (generic `gindex` + MTG derive/hooks/translate, cross-checked against the old index).
 - **S4 Overlays, manifest v2, sync and TS API generalised.**
 - **S5 Proof: a second, non-MTG schema** (a small synthetic dataset) compiled, searched, patched, published offline and synced
   end to end.

@@ -1,4 +1,4 @@
-# S3: generic index and query engine over `Store` (design, 0.0.2-16; no code yet)
+# S3: generic index and query engine over `Store` (design 0.0.2-16; S3a built 0.0.2-18)
 
 Goal: `coqc-format` indexes and searches any `Store` from its schema; everything Magic-specific is a `coqc-mtg` hook. MTG goldens
 (60 fixture queries, 9 real-data counts), `.coqi` size (+-5%) and query latency (+10%) must not move. Today `search.rs` (928 lines) and
@@ -54,3 +54,23 @@ that each end green.
 
 ## Needs from the user before S3b (not S3a)
 Single-line `-t:land` re-run (expect 37848) and the real-data timing loop again after S3b; nothing is needed for S3a.
+
+## S3a status (0.0.2-18, built)
+- `coqc_format::gindex` (`GIndex`, `GExpr`, `GQuery`, `Val`, `DerivedCol`/`DData`, `Hooks`): generic evaluator over a `Store`. Primary table =
+  the one with `Rel::Parent`; parent and sidecar predicates are evaluated on parent rows and lifted through the `Ref` column. Text columns
+  declared `IndexKind::Text` get an automatic folded arena + trigram index; dialect `DerivedCol`s (Text/Mask/Num/Flag, optional shared
+  trigram group) win name lookups; `Custom` predicates go to the dialect's `Hooks`. Sort, unique-by-parent + prefer, hide-flag, scope,
+  offset/limit are generic. Query tree is serde JSON.
+- `coqc_mtg::gindex`: `derive(&Dataset)` (still reads the legacy `Dataset`, same folding as `SearchIndex::build`), `MtgHooks`
+  (`tilde`, `mv_parity`, `name_exact`), `translate(&Query) -> GQuery`.
+- Old `search.rs` helpers (`Bits`, `Arena`, `Trigrams`, `fold*`, `oracle_mask`, ...) made `pub` so the new code reuses them; deleted in S3c.
+- `crates/compiler/tests/gindex.rs`: ~120 queries x unique x prefer x include-extras over sample_a/sample_b (with and without skip flags)
+  and 4000 synthetic cards: identical totals and row order to the old index. 54 tests pass.
+- Not done in S3a (S3b): `.coqi` serialisation/delta of the generic index, deriving from the `Store` instead of the `Dataset`, engine/CLI switch,
+  `Enum` ordering flag in the schema (rarity order is a derived Num for now), skipping trigram indexes on Text columns the dialect never searches
+  (printing `set_name`/`flavor_text`/`artist` are built automatically today), regex.
+- Synthetic 120k-card timing (`cargo test --release -p coqc --test gindex -- --ignored --nocapture`, sandbox machine): old build 736 ms,
+  generic derive+build 1476 ms (extra auto text columns + derive pass; S3b target is parity); queries old vs generic (ms): bolt 0.15/0.31,
+  t:creature 13.9/15.5, c:rg 0.21/0.37, o:flying 10.2/12.2, mv>=5 11.0/12.7, r:mythic 0.79/0.91, s:lea 5.4/1.2, -t:land 15.5/15.8,
+  legendary creature 2.6/1.1. Per-row closures cost ~10-15% on full scans; a typed fast path for hot fields is the S3b fix if the real-data
+  numbers need it.

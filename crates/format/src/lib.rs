@@ -3,6 +3,7 @@ pub mod codec;
 pub mod container;
 pub mod coqd;
 pub mod dialect;
+pub mod gindex;
 pub mod patch;
 pub mod prices;
 pub mod schema;

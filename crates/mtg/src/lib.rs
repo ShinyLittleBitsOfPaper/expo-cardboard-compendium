@@ -1,6 +1,7 @@
 //! The Magic: The Gathering dialect of coq. Everything that knows about Scryfall's card JSON, MTGJSON prices or Scryfall query
 //! syntax lives here; `coqc-format` holds the container, patch, price-table and index machinery. See docs/schema-design.md (S1).
 
+pub mod gindex;
 pub mod ingest;
 pub mod json;
 pub mod parse;
