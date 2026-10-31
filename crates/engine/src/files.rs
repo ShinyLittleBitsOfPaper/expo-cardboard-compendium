@@ -1,5 +1,5 @@
 //! Stateless file helpers for the sync layer (no open engine needed): streaming SHA-256 and zstd decompression to a
-//! file. They exist so the TypeScript side can verify downloads and unpack the `.coqs.zst` without a JS crypto or
+//! file. They exist so the TypeScript side can verify downloads and unpack the `.coqi.zst` without a JS crypto or
 //! zstd dependency, and without pulling 20-30 MB files through the JS bridge.
 
 use serde_json::{json, Value};

@@ -26,7 +26,7 @@ export interface PricePatch {
 }
 export interface MinFormat {
   coqd: number;
-  coqs: number;
+  coqi: number;
   coqr: number;
 }
 export interface Manifest {
@@ -78,7 +78,7 @@ export function parseManifest(json: unknown): Manifest {
     rebase: typeof m.rebase === 'boolean' ? m.rebase : bad('rebase'),
     min_client_format: {
       coqd: num(mf.coqd, 'min_client_format.coqd'),
-      coqs: num(mf.coqs, 'min_client_format.coqs'),
+      coqi: num(mf.coqi, 'min_client_format.coqi'),
       coqr: num(mf.coqr, 'min_client_format.coqr'),
     },
     cards: {

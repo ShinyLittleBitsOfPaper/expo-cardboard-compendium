@@ -285,8 +285,8 @@ impl Bits {
 /// Text kept in one arena; `off[i]..off[i+1]` is row i.
 #[derive(Default)]
 pub struct Arena {
-    text: String,
-    off: Vec<u32>,
+    pub(crate) text: String,
+    pub(crate) off: Vec<u32>,
 }
 
 impl Arena {
@@ -306,12 +306,12 @@ impl Arena {
 #[derive(Default)]
 pub struct Trigrams {
     /// sorted gram keys; `start[i]..start[i+1]` is the postings range in `post`
-    keys: Vec<u32>,
-    start: Vec<u32>,
+    pub(crate) keys: Vec<u32>,
+    pub(crate) start: Vec<u32>,
     /// delta-varint row ids
-    post: Vec<u8>,
+    pub(crate) post: Vec<u8>,
     /// grams present in more than `stop_df` rows: not stored, never used to narrow
-    stop: Vec<u32>,
+    pub(crate) stop: Vec<u32>,
 }
 
 fn gram(b: &[u8]) -> u32 {

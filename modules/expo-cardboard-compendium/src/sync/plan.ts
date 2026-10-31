@@ -4,7 +4,7 @@ import type { CardPatch, Manifest, MinFormat, PricePatch } from './manifest';
 import { SUPPORTED_MANIFEST_VERSION } from './manifest';
 
 /** Highest reader format of each file type this build of the module can read. Keep in step with the Rust crates. */
-export const MODULE_FORMAT: MinFormat = { coqd: 2, coqs: 1, coqr: 1 };
+export const MODULE_FORMAT: MinFormat = { coqd: 2, coqi: 1, coqr: 1 };
 
 /** What is on the device (persisted by the sync layer in `state.json`). */
 export interface LocalState {
@@ -54,7 +54,7 @@ export function planSync(m: Manifest, local: LocalState | null, fmt: MinFormat =
   const required: Partial<MinFormat> & { manifest?: number } = {};
   if (m.manifest_version > SUPPORTED_MANIFEST_VERSION) required.manifest = m.manifest_version;
   if (m.min_client_format.coqd > fmt.coqd) required.coqd = m.min_client_format.coqd;
-  if (m.min_client_format.coqs > fmt.coqs) required.coqs = m.min_client_format.coqs;
+  if (m.min_client_format.coqi > fmt.coqi) required.coqi = m.min_client_format.coqi;
   if (m.min_client_format.coqr > fmt.coqr) required.coqr = m.min_client_format.coqr;
   if (Object.keys(required).length > 0) return { status: 'needs_app_update', required };
 

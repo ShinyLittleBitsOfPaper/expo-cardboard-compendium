@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "On-device engine: opens COQD + COQS, Scryfall-syntax search, card lookup, updates; C ABI for the Expo module"
+description = "On-device engine: opens COQD + COQI, Scryfall-syntax search, card lookup, updates; C ABI for the Expo module"
 
 [lib]
 name = "coqe"

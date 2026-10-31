@@ -1,9 +1,8 @@
 use coqc::{compile, Options};
-use coqc_format::search::{coqs, SearchIndex};
+use coqc_format::coqi;
 use coqc_mtg::write;
 use coqe::Engine;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 fn fx(n: &str) -> PathBuf {
@@ -26,17 +25,22 @@ fn open_search_cards_scope_and_ffi() {
     let dir = tmp("a");
     let (a, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
     let (bytes, _) = write(&a).unwrap();
-    let (coqd, coqs_p) = (dir.join("c.coqd"), dir.join("c.coqs"));
+    let (coqd, coqi_p) = (dir.join("c.coqd"), dir.join("c.coqi"));
     std::fs::write(&coqd, &bytes).unwrap();
 
-    let mut e = Engine::open(&coqd, Some(&coqs_p)).unwrap();
+    let mut e = Engine::open(&coqd, Some(&coqi_p)).unwrap();
     assert_eq!(e.info()["index"], "built");
-    assert!(coqs_p.exists(), "index persisted");
-    let e2 = Engine::open(&coqd, Some(&coqs_p)).unwrap();
-    assert_eq!(e2.info()["index"], "coqs");
+    assert!(coqi_p.exists(), "index persisted");
+    let e2 = Engine::open(&coqd, Some(&coqi_p)).unwrap();
+    assert_eq!(e2.info()["index"], "coqi");
     // a .coqs for a different dataset is ignored and rebuilt
-    std::fs::write(&coqs_p, coqs::serialize(&SearchIndex::build(&a), &[1u8; 32])).unwrap();
-    assert_eq!(Engine::open(&coqd, Some(&coqs_p)).unwrap().info()["index"], "built");
+    {
+        // a .coqi built for a different dataset (other hash in the header) is ignored and rebuilt
+        let mut other = coqc::build_index_file(&bytes).unwrap();
+        other[6..38].copy_from_slice(&[1u8; 32]);
+        std::fs::write(&coqi_p, other).unwrap();
+    }
+    assert_eq!(Engine::open(&coqd, Some(&coqi_p)).unwrap().info()["index"], "built");
 
     let r = e.call("search", &json!({"query": "bolt", "cards": true, "limit": 5})).unwrap();
     let n = r["total"].as_u64().unwrap();
@@ -59,7 +63,7 @@ fn open_search_cards_scope_and_ffi() {
     assert!(e.call("search", &json!({"query": "frobnicate:1"})).is_err());
 
     // C ABI wrapper returns {ok}/{error}
-    let ok: Value = serde_json::from_str(&coqe::ffi::call_json("open", &json!({"coqd": coqd, "coqs": coqs_p}).to_string())).unwrap();
+    let ok: Value = serde_json::from_str(&coqe::ffi::call_json("open", &json!({"coqd": coqd, "coqi": coqi_p}).to_string())).unwrap();
     assert!(ok["ok"]["printings"].as_u64().unwrap() > 0);
     let s: Value = serde_json::from_str(&coqe::ffi::call_json("search", r#"{"query":"bolt","limit":1}"#)).unwrap();
     assert_eq!(s["ok"]["rows"].as_array().unwrap().len(), 1);
@@ -76,18 +80,18 @@ fn patch_then_index_delta_matches_fresh_build() {
     let (a, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
     let (b, _) = compile(&fx("sample_b.jsonl"), Some(&a), &opts()).unwrap();
     let ((ab, _), (bb, _)) = (write(&a).unwrap(), write(&b).unwrap());
-    let (coqd, coqs_p) = (dir.join("c.coqd"), dir.join("c.coqs"));
+    let (coqd, coqi_p) = (dir.join("c.coqd"), dir.join("c.coqi"));
     std::fs::write(&coqd, &ab).unwrap();
-    let mut e = Engine::open(&coqd, Some(&coqs_p)).unwrap();
+    let mut e = Engine::open(&coqd, Some(&coqi_p)).unwrap();
     let before = e.call("search", &json!({"query": "include:extras"})).unwrap()["total"].as_u64().unwrap();
 
     let (patch, _) = coqc::patch::make_patch(&ab, &bb).unwrap();
     let pp = dir.join("p.coqp");
     std::fs::write(&pp, patch).unwrap();
-    let fa = coqs::serialize(&SearchIndex::build(&a), &Sha256::digest(&ab).into());
-    let fb = coqs::serialize(&SearchIndex::build(&b), &Sha256::digest(&bb).into());
-    let (delta, _) = coqs::make_delta(&fa, &fb).unwrap();
-    let dp = dir.join("d.coqsd");
+    let fa = coqc::build_index_file(&ab).unwrap();
+    let fb = coqc::build_index_file(&bb).unwrap();
+    let (delta, _) = coqi::make_delta(&fa, &fb).unwrap();
+    let dp = dir.join("d.coqid");
     std::fs::write(&dp, delta).unwrap();
 
     // index delta before the dataset patch is refused
@@ -95,14 +99,14 @@ fn patch_then_index_delta_matches_fresh_build() {
     assert_eq!(e.call("applyPatch", &json!({"path": pp})).unwrap()["index"], "stale");
     assert_eq!(std::fs::read(&coqd).unwrap(), bb, "dataset replays byte-identically");
     assert_eq!(e.call("applyIndexDelta", &json!({"path": dp})).unwrap()["index"], "delta");
-    assert_eq!(std::fs::read(&coqs_p).unwrap(), fb, "index replays byte-identically");
+    assert_eq!(std::fs::read(&coqi_p).unwrap(), fb, "index replays byte-identically");
     let after = e.call("search", &json!({"query": "include:extras"})).unwrap()["total"].as_u64().unwrap();
     assert!(after > before);
 
     // skipping the delta is safe: a stale index is rebuilt on the next search
     std::fs::write(&coqd, &ab).unwrap();
-    std::fs::write(&coqs_p, &fa).unwrap();
-    let mut e = Engine::open(&coqd, Some(&coqs_p)).unwrap();
+    std::fs::write(&coqi_p, &fa).unwrap();
+    let mut e = Engine::open(&coqd, Some(&coqi_p)).unwrap();
     e.call("applyPatch", &json!({"path": pp})).unwrap();
     assert_eq!(e.call("search", &json!({"query": "include:extras"})).unwrap()["total"].as_u64().unwrap(), after);
     assert_eq!(e.info()["index"], "built");

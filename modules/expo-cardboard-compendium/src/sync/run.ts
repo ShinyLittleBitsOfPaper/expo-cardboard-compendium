@@ -9,7 +9,7 @@ export const DEFAULT_MANIFEST_URL =
   'https://github.com/ShinyLittleBitsOfPaper/expo-cardboard-compendium/releases/download/data-latest/manifest.json';
 
 export interface EngineOps {
-  open(coqd: string, coqs: string): Promise<{ datasetSha256: string; index: string }>;
+  open(coqd: string, coqi: string): Promise<{ datasetSha256: string; index: string }>;
   info(): Promise<{ datasetSha256: string; index: string }>;
   applyPatch(path: string): Promise<{ datasetSha256: string; index: string }>;
   applyIndexDelta(path: string): Promise<{ datasetSha256: string; index: string }>;
@@ -31,7 +31,7 @@ export interface SyncDeps {
 }
 
 export interface SyncOptions {
-  /** Directory (plain path) that holds cards.coqd, cards.coqs, prices.coqr and state.json. */
+  /** Directory (plain path) that holds cards.coqd, cards.coqi, prices.coqr and state.json. */
   dir: string;
   manifestUrl?: string;
   /** Called before each download/apply step. */
@@ -55,7 +55,7 @@ export interface SyncResult {
 
 export const dataPaths = (dir: string) => {
   const d = dir.replace(/\/+$/, '');
-  return { coqd: `${d}/cards.coqd`, coqs: `${d}/cards.coqs`, coqr: `${d}/prices.coqr`, state: `${d}/state.json` };
+  return { coqd: `${d}/cards.coqd`, coqi: `${d}/cards.coqi`, coqr: `${d}/prices.coqr`, state: `${d}/state.json` };
 };
 
 function parseState(text: string | null): LocalState | null {
@@ -108,17 +108,17 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
     progress('cards', 1, total);
     const d = await fetchVerified(manifest.cards.file, 'cards.coqd.part');
     progress('index', 2, total);
-    const z = await fetchVerified(manifest.cards.index, 'cards.coqs.zst.part');
-    const raw = await engine.unzstFile(z, tmp('cards.coqs.part'));
+    const z = await fetchVerified(manifest.cards.index, 'cards.coqi.zst.part');
+    const raw = await engine.unzstFile(z, tmp('cards.coqi.part'));
     await engine.removeFile(z);
     if (raw.sha256 !== manifest.cards.index.raw_sha256 || raw.size !== manifest.cards.index.raw_size) {
-      await engine.removeFile(tmp('cards.coqs.part'));
+      await engine.removeFile(tmp('cards.coqi.part'));
       await engine.removeFile(d);
       throw new Error('cards index: decompressed data failed verification');
     }
     // Swap dataset first, then index: a crash in between leaves a stale index, which the engine rebuilds on open.
     await engine.moveFile(d, paths.coqd);
-    await engine.moveFile(tmp('cards.coqs.part'), paths.coqs);
+    await engine.moveFile(tmp('cards.coqi.part'), paths.coqi);
     await saveState({ epoch: manifest.epoch, cardsStamp: manifest.cards.stamp, cardsSha256: manifest.cards.file.sha256, pricesStamp: local?.pricesStamp ?? null });
   };
 
@@ -129,7 +129,7 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
     } catch {
       // engine not open yet
     }
-    if (!info || info.datasetSha256 !== local!.cardsSha256) info = await engine.open(paths.coqd, paths.coqs);
+    if (!info || info.datasetSha256 !== local!.cardsSha256) info = await engine.open(paths.coqd, paths.coqi);
     for (const [i, s] of chain.entries()) {
       progress(`patch ${s.to}`, i + 1, chain.length);
       const p = await fetchVerified(s.patch, 'step.coqp.part');
@@ -141,7 +141,7 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
       if (s.index_delta) {
         // Best effort: if the delta does not apply, the engine rebuilds the index on the next search.
         try {
-          const d = await fetchVerified(s.index_delta, 'step.coqsd.part');
+          const d = await fetchVerified(s.index_delta, 'step.coqid.part');
           try {
             info = await engine.applyIndexDelta(d);
           } finally {

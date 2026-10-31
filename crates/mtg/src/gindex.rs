@@ -3,60 +3,128 @@
 //! `Store`); the folding rules are exactly those of `SearchIndex::build`.
 use coqc_format::gindex::*;
 use coqc_format::search::*;
-use coqc_format::Dataset;
+use coqc_format::table::{ColData, Store};
+use coqc_format::{Dataset, OracleRecord};
+use crate::tables;
 
 pub const TEXT_GROUP: &str = "text";
 
-pub fn derive(ds: &Dataset) -> Vec<DerivedCol> {
-    let (mut name_plain, mut name_n, mut name_sort, mut type_f, mut text, mut full) = (vec![], vec![], vec![], vec![], vec![], vec![]);
-    let (mut colors, mut identity) = (vec![], vec![]);
-    for o in &ds.oracle {
+/// Column builder shared by [`derive`] (legacy `Dataset`) and [`derive_store`] (`Store`), so both fold identically.
+#[derive(Default)]
+struct Acc {
+    name_plain: Vec<String>,
+    name_n: Vec<String>,
+    name_sort: Vec<String>,
+    type_f: Vec<String>,
+    text: Vec<String>,
+    full: Vec<String>,
+    colors: Vec<u32>,
+    identity: Vec<u32>,
+    set_f: Vec<String>,
+    cn_f: Vec<String>,
+    hidden: Vec<bool>,
+    rank: Vec<Option<f64>>,
+    rar_s: Vec<String>,
+    cn_num: Vec<Option<f64>>,
+}
+
+impl Acc {
+    fn oracle(&mut self, o: &OracleRecord) {
         let name = o.name.clone().unwrap_or_default();
-        name_plain.push(fold(&name));
-        name_n.push(fold_name(&name));
-        name_sort.push(fold(&name).chars().filter(|c| c.is_alphanumeric()).collect::<String>());
-        type_f.push(fold(&join_faces(&o.type_line, &o.faces, |f| &f.type_line)));
+        self.name_plain.push(fold(&name));
+        self.name_n.push(fold_name(&name));
+        self.name_sort.push(fold(&name).chars().filter(|c| c.is_alphanumeric()).collect::<String>());
+        self.type_f.push(fold(&join_faces(&o.type_line, &o.faces, |f| &f.type_line)));
         let f = join_faces(&o.oracle_text, &o.faces, |f| &f.oracle_text);
-        text.push(fold(&strip_reminder(&f)));
-        full.push(fold(&f));
-        colors.push(oracle_mask(o, o.colors, "colors", true) as u32);
-        identity.push(oracle_mask(o, o.color_identity, "color_identity", false) as u32);
+        self.text.push(fold(&strip_reminder(&f)));
+        self.full.push(fold(&f));
+        self.colors.push(oracle_mask(o, o.colors, "colors", true) as u32);
+        self.identity.push(oracle_mask(o, o.color_identity, "color_identity", false) as u32);
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn printing(&mut self, layout: Option<&str>, extra: Option<&str>, playtest: bool, set: Option<&str>, cn: Option<&str>, rarity: Option<&str>) {
+        let set_type = extra.and_then(json_str_field_set_type);
+        self.hidden.push(matches!(layout, Some("vanguard" | "planar" | "scheme" | "phenomenon" | "art_series")) || matches!(set_type, Some("memorabilia")) || playtest);
+        self.set_f.push(set.map(fold).unwrap_or_default());
+        let cn = cn.map(fold).unwrap_or_default();
+        let d: String = cn.chars().take_while(|c| c.is_ascii_digit()).collect();
+        self.cn_num.push(d.parse::<f64>().ok());
+        self.cn_f.push(cn);
+        self.rar_s.push(rarity.map(String::from).unwrap_or_default());
+        self.rank.push(rarity.and_then(rarity_rank).map(|r| r as f64));
+    }
+
+    fn finish(self) -> Vec<DerivedCol> {
+        let t = |table: &str, name: &str, v: Vec<String>, g: Option<&str>| DerivedCol { table: table.into(), name: name.into(), data: DData::Text(v), tri_group: g.map(String::from) };
+        vec![
+            t("oracle", "name_plain", self.name_plain, None),
+            t("oracle", "name_n", self.name_n, Some("name")),
+            t("oracle", "name_sort", self.name_sort, None),
+            t("oracle", "type_f", self.type_f, None),
+            t("oracle", "text", self.text, Some(TEXT_GROUP)),
+            t("oracle", "full_text", self.full, Some(TEXT_GROUP)),
+            DerivedCol { table: "oracle".into(), name: "colors_m".into(), data: DData::Mask(self.colors), tri_group: None },
+            DerivedCol { table: "oracle".into(), name: "identity_m".into(), data: DData::Mask(self.identity), tri_group: None },
+            t("printing", "set_f", self.set_f, None),
+            t("printing", "cn_f", self.cn_f, None),
+            t("printing", "rarity_s", self.rar_s, None),
+            DerivedCol { table: "printing".into(), name: "hidden".into(), data: DData::Flag(self.hidden), tri_group: None },
+            DerivedCol { table: "printing".into(), name: "rarity_rank".into(), data: DData::Num(self.rank), tri_group: None },
+            DerivedCol { table: "printing".into(), name: "cn_num".into(), data: DData::Num(self.cn_num), tri_group: None },
+        ]
+    }
+}
+
+/// Schema `Text` columns the MTG dialect never searches by their own name (it searches the derived, folded variants instead).
+pub const SKIP_AUTO: [&str; 6] = ["oracle.name", "oracle.type_line", "oracle.oracle_text", "printing.set_name", "printing.flavor_text", "printing.artist"];
+
+pub fn derive(ds: &Dataset) -> Vec<DerivedCol> {
+    let mut a = Acc::default();
+    ds.oracle.iter().for_each(|o| a.oracle(o));
     let rarities: Vec<String> = ds.meta.rarities.values().iter().map(|r| r.to_string()).collect();
     let layouts = ds.meta.layouts.values();
     let promo_types = ds.meta.promo_types.values();
-    let (mut set_f, mut cn_f, mut hidden, mut rank, mut rar_s, mut cn_num) = (vec![], vec![], vec![], vec![], vec![], vec![]);
     for p in &ds.printings {
         let layout = p.layout.and_then(|l| layouts.get(l as usize)).map(|x| x.as_str());
-        let set_type = p.extra.as_deref().and_then(json_str_field_set_type);
         let playtest = p.promo_types.as_ref().is_some_and(|v| v.iter().any(|&t| promo_types.get(t as usize).is_some_and(|n| n == "playtest")));
-        hidden.push(matches!(layout, Some("vanguard" | "planar" | "scheme" | "phenomenon" | "art_series")) || matches!(set_type, Some("memorabilia")) || playtest);
-        set_f.push(p.set_code.as_deref().map(fold).unwrap_or_default());
-        let cn = p.collector_number.as_deref().map(fold).unwrap_or_default();
-        let d: String = cn.chars().take_while(|c| c.is_ascii_digit()).collect();
-        cn_num.push(d.parse::<f64>().ok());
-        cn_f.push(cn);
-        let name = p.rarity.and_then(|id| rarities.get(id as usize));
-        rar_s.push(name.cloned().unwrap_or_default());
-        rank.push(name.and_then(|n| rarity_rank(n)).map(|r| r as f64));
+        let rar = p.rarity.and_then(|id| rarities.get(id as usize)).map(|s| s.as_str());
+        a.printing(layout, p.extra.as_deref(), playtest, p.set_code.as_deref(), p.collector_number.as_deref(), rar);
     }
-    let t = |table: &str, name: &str, v: Vec<String>, g: Option<&str>| DerivedCol { table: table.into(), name: name.into(), data: DData::Text(v), tri_group: g.map(String::from) };
-    vec![
-        t("oracle", "name_plain", name_plain, None),
-        t("oracle", "name_n", name_n, Some("name")),
-        t("oracle", "name_sort", name_sort, None),
-        t("oracle", "type_f", type_f, None),
-        t("oracle", "text", text, Some(TEXT_GROUP)),
-        t("oracle", "full_text", full, Some(TEXT_GROUP)),
-        DerivedCol { table: "oracle".into(), name: "colors_m".into(), data: DData::Mask(colors), tri_group: None },
-        DerivedCol { table: "oracle".into(), name: "identity_m".into(), data: DData::Mask(identity), tri_group: None },
-        t("printing", "set_f", set_f, None),
-        t("printing", "cn_f", cn_f, None),
-        t("printing", "rarity_s", rar_s, None),
-        DerivedCol { table: "printing".into(), name: "hidden".into(), data: DData::Flag(hidden), tri_group: None },
-        DerivedCol { table: "printing".into(), name: "rarity_rank".into(), data: DData::Num(rank), tri_group: None },
-        DerivedCol { table: "printing".into(), name: "cn_num".into(), data: DData::Num(cn_num), tri_group: None },
-    ]
+    a.finish()
+}
+
+/// Same columns as [`derive`], computed straight from a store with the MTG schema (no `Dataset` is built).
+pub fn derive_store(st: &Store) -> Result<Vec<DerivedCol>, String> {
+    let e = |e: coqc_format::Error| e.to_string();
+    tables::check_schema(st).map_err(e)?;
+    let mut a = Acc::default();
+    for i in 0..st.tables[0].rows() {
+        a.oracle(&tables::oracle_at(st, i).map_err(e)?);
+    }
+    let meta = tables::meta_of(st);
+    let rarities: Vec<String> = meta.rarities.values().iter().map(|r| r.to_string()).collect();
+    let layouts = meta.layouts.values();
+    let promo_types = meta.promo_types.values();
+    let bad = || "column type".to_string();
+    let col = |c: usize| &st.tables[2].cols[c];
+    let (ColData::Enum(layout_c), ColData::Json(extra_c), ColData::Set(ptypes_c), ColData::Str(set_c), ColData::Str(cn_c), ColData::Enum(rar_c)) =
+        (col(2), col(20), col(14), col(5), col(7), col(8))
+    else {
+        return Err(bad());
+    };
+    for i in 0..st.tables[2].rows() {
+        let layout = layout_c[i].and_then(|l| layouts.get(l as usize)).map(|x| x.as_str());
+        let playtest = ptypes_c[i].as_ref().is_some_and(|v| v.iter().any(|&t| promo_types.get(t as usize).is_some_and(|n| n == "playtest")));
+        let rar = rar_c[i].and_then(|id| rarities.get(id as usize)).map(|s| s.as_str());
+        a.printing(layout, extra_c[i].as_deref(), playtest, set_c[i].as_deref(), cn_c[i].as_deref(), rar);
+    }
+    Ok(a.finish())
+}
+
+/// The full spec the MTG dialect gives the generic index builder.
+pub fn index_spec(st: &Store) -> Result<IndexSpec, String> {
+    Ok(IndexSpec { derived: derive_store(st)?, skip_auto: SKIP_AUTO.iter().map(|s| s.to_string()).collect() })
 }
 
 pub struct MtgHooks;

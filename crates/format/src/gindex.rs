@@ -104,18 +104,37 @@ pub struct GResult {
     pub rows: Vec<u32>,
 }
 
-enum DKind {
+pub(crate) enum DKind {
     Text(Arena),
     Mask(Vec<u32>),
     Num(Vec<Option<f64>>),
     Flag(Vec<bool>),
 }
 
-struct Dcol {
-    table: usize,
-    name: String,
-    kind: DKind,
-    tri: Option<usize>,
+pub(crate) struct Dcol {
+    pub(crate) table: usize,
+    pub(crate) name: String,
+    pub(crate) kind: DKind,
+    pub(crate) tri: Option<usize>,
+}
+
+/// The expensive, serialisable part of an index: dialect-derived columns, automatic text columns and trigram tables.
+pub struct IndexParts {
+    pub(crate) dcols: Vec<Dcol>,
+    pub(crate) tris: Vec<Trigrams>,
+}
+
+/// What a dialect hands the builder: its derived columns, plus schema `Text` columns it never searches (`"table.column"`) so
+/// no folded copy or trigram table is built for them.
+#[derive(Default)]
+pub struct IndexSpec {
+    pub derived: Vec<DerivedCol>,
+    pub skip_auto: Vec<String>,
+}
+
+enum Parts<'a> {
+    Owned(IndexParts),
+    Borrowed(&'a IndexParts),
 }
 
 #[derive(Clone, Copy)]
@@ -141,8 +160,7 @@ pub struct GIndex<'a> {
     hooks: Option<&'a dyn Hooks>,
     primary: usize,
     parent_ref: Option<usize>,
-    dcols: Vec<Dcol>,
-    tris: Vec<Trigrams>,
+    parts: Parts<'a>,
     tlive: Vec<Vec<bool>>,
     /// per table: primary row -> row of that table (None for the primary itself or when unreachable)
     maps: Vec<Option<&'a [u32]>>,
@@ -160,20 +178,160 @@ fn mask_cmp(a: u32, b: u32, op: Op) -> bool {
     }
 }
 
+/// Per-table liveness; a sidecar follows its target.
+fn table_live(store: &Store) -> Result<Vec<Vec<bool>>, String> {
+    let sc = &store.schema;
+    let mut tlive: Vec<Vec<bool>> = store.tables.iter().map(|t| t.tomb.iter().map(|x| !x).collect()).collect();
+    for (i, t) in sc.tables.iter().enumerate() {
+        if let Rel::Sidecar(p) = &t.rel {
+            let k = sc.table(p).ok_or_else(|| format!("unknown table {p}"))?;
+            tlive[i] = tlive[k].clone();
+        }
+    }
+    Ok(tlive)
+}
+
 impl<'a> GIndex<'a> {
     pub fn build(store: &'a Store, derived: Vec<DerivedCol>, hooks: Option<&'a dyn Hooks>) -> Result<Self, String> {
         Self::build_with(store, derived, hooks, STOP_FRACTION, STOP_MIN)
     }
 
     pub fn build_with(store: &'a Store, derived: Vec<DerivedCol>, hooks: Option<&'a dyn Hooks>, stop_fraction: f64, stop_min: usize) -> Result<Self, String> {
+        let parts = Self::build_parts(store, IndexSpec { derived, skip_auto: vec![] }, stop_fraction, stop_min)?;
+        Self::assemble(store, hooks, Parts::Owned(parts))
+    }
+
+    /// Build the index parts from a dialect's spec (default stop-gram thresholds), owning them.
+    pub fn build_spec(store: &'a Store, spec: IndexSpec, hooks: Option<&'a dyn Hooks>) -> Result<Self, String> {
+        let parts = Self::build_parts(store, spec, STOP_FRACTION, STOP_MIN)?;
+        Self::assemble(store, hooks, Parts::Owned(parts))
+    }
+
+    /// The expensive step on its own, so a caller can keep (or serialise) the parts and re-attach them to the store cheaply.
+    pub fn build_parts(store: &Store, spec: IndexSpec, stop_fraction: f64, stop_min: usize) -> Result<IndexParts, String> {
+        let sc = &store.schema;
+        let tid = |n: &str| sc.table(n).ok_or_else(|| format!("unknown table {n}"));
+        let tlive = table_live(store)?;
+        let mut parts = IndexParts { dcols: vec![], tris: vec![] };
+        // dialect-derived columns first (they win name lookups), then automatic text columns from the schema
+        let mut groups: Vec<(String, usize, Vec<usize>)> = vec![]; // (group, table, members)
+        for d in spec.derived {
+            let table = tid(&d.table)?;
+            let n = store.tables[table].rows();
+            let (kind, len) = match d.data {
+                DData::Text(v) => {
+                    let len = v.len();
+                    let mut a = Arena::default();
+                    v.iter().for_each(|s| a.push(s));
+                    (DKind::Text(a), len)
+                }
+                DData::Mask(v) => {
+                    let l = v.len();
+                    (DKind::Mask(v), l)
+                }
+                DData::Num(v) => {
+                    let l = v.len();
+                    (DKind::Num(v), l)
+                }
+                DData::Flag(v) => {
+                    let l = v.len();
+                    (DKind::Flag(v), l)
+                }
+            };
+            if len != n {
+                return Err(format!("derived column {}.{} has {len} rows, table has {n}", d.table, d.name));
+            }
+            let idx = parts.dcols.len();
+            parts.dcols.push(Dcol { table, name: d.name, kind, tri: None });
+            if let Some(g) = d.tri_group {
+                match groups.iter_mut().find(|x| x.0 == g) {
+                    Some(x) => {
+                        if x.1 != table {
+                            return Err(format!("trigram group {g} spans tables"));
+                        }
+                        x.2.push(idx)
+                    }
+                    None => groups.push((g, table, vec![idx])),
+                }
+            }
+        }
+        for (ti, t) in sc.tables.iter().enumerate() {
+            for (ci, c) in t.columns.iter().enumerate() {
+                if c.index == IndexKind::Text
+                    && c.ty == ColType::Str
+                    && !spec.skip_auto.iter().any(|s| *s == format!("{}.{}", t.name, c.name))
+                    && !parts.dcols.iter().any(|d| d.table == ti && d.name == c.name)
+                {
+                    if let ColData::Str(v) = &store.tables[ti].cols[ci] {
+                        let mut a = Arena::default();
+                        v.iter().for_each(|s| a.push(&crate::search::fold(s.as_deref().unwrap_or(""))));
+                        let idx = parts.dcols.len();
+                        parts.dcols.push(Dcol { table: ti, name: c.name.clone(), kind: DKind::Text(a), tri: None });
+                        groups.push((format!("\u{1}{ti}.{}", c.name), ti, vec![idx]));
+                    }
+                }
+            }
+        }
+        for (_, table, members) in groups {
+            let n = store.tables[table].rows();
+            let mut both = Arena::default();
+            for i in 0..n {
+                let ps: Vec<&str> = members.iter().map(|&m| if let DKind::Text(a) = &parts.dcols[m].kind { a.get(i) } else { "" }).collect();
+                both.push(&ps.join("\u{0}"));
+            }
+            let live = &tlive[table];
+            let tri = Trigrams::build(&both, |i| live[i], stop_fraction, stop_min);
+            let id = parts.tris.len();
+            parts.tris.push(tri);
+            for m in members {
+                parts.dcols[m].tri = Some(id);
+            }
+        }
+        Ok(parts)
+    }
+
+    /// Attach previously built (or deserialised) parts to a store. Fails when a column's length no longer matches its table.
+    pub fn with_parts(store: &'a Store, hooks: Option<&'a dyn Hooks>, parts: &'a IndexParts) -> Result<Self, String> {
+        Self::assemble(store, hooks, Parts::Borrowed(parts))
+    }
+
+    pub fn into_parts(self) -> Option<IndexParts> {
+        match self.parts {
+            Parts::Owned(p) => Some(p),
+            Parts::Borrowed(_) => None,
+        }
+    }
+
+    pub fn parts(&self) -> &IndexParts {
+        self.p()
+    }
+
+    fn p(&self) -> &IndexParts {
+        match &self.parts {
+            Parts::Owned(p) => p,
+            Parts::Borrowed(p) => p,
+        }
+    }
+
+    fn assemble(store: &'a Store, hooks: Option<&'a dyn Hooks>, parts: Parts<'a>) -> Result<Self, String> {
         let sc = &store.schema;
         let tid = |n: &str| sc.table(n).ok_or_else(|| format!("unknown table {n}"));
         let primary = sc.tables.iter().position(|t| matches!(t.rel, Rel::Parent(_))).unwrap_or(0);
-        // per-table liveness; a sidecar follows its target
-        let mut tlive: Vec<Vec<bool>> = store.tables.iter().map(|t| t.tomb.iter().map(|x| !x).collect()).collect();
-        for (i, t) in sc.tables.iter().enumerate() {
-            if let Rel::Sidecar(p) = &t.rel {
-                tlive[i] = tlive[tid(p)?].clone();
+        let tlive = table_live(store)?;
+        let pr = match &parts {
+            Parts::Owned(p) => p,
+            Parts::Borrowed(p) => p,
+        };
+        for d in &pr.dcols {
+            let n = store.tables[d.table].rows();
+            let len = match &d.kind {
+                DKind::Text(a) => a.len(),
+                DKind::Mask(v) => v.len(),
+                DKind::Num(v) => v.len(),
+                DKind::Flag(v) => v.len(),
+            };
+            if len != n || d.tri.is_some_and(|t| t >= pr.tris.len()) {
+                return Err(format!("index column {}.{} does not match the dataset", sc.tables[d.table].name, d.name));
             }
         }
         // reachability: primary row -> row of table t
@@ -196,6 +354,7 @@ impl<'a> GIndex<'a> {
             };
             maps[i] = ref_to(target).map(|x| x.1);
         }
+        let _ = tid;
         let parent_ref = match &sc.tables[primary].rel {
             Rel::Parent(p) => ref_to(p).map(|x| x.0),
             _ => None,
@@ -206,69 +365,7 @@ impl<'a> GIndex<'a> {
                 live_p.set(i);
             }
         }
-        let mut ix = GIndex { store, hooks, primary, parent_ref, dcols: vec![], tris: vec![], tlive, maps, live_p };
-        // dialect-derived columns first (they win name lookups), then automatic text columns from the schema
-        let mut groups: Vec<(String, usize, Vec<usize>)> = vec![]; // (group, table, members)
-        for d in derived {
-            let table = tid(&d.table)?;
-            let n = store.tables[table].rows();
-            let (kind, len) = match d.data {
-                DData::Text(v) => {
-                    let len = v.len();
-                    let mut a = Arena::default();
-                    v.iter().for_each(|s| a.push(s));
-                    (DKind::Text(a), len)
-                }
-                DData::Mask(v) => (DKind::Mask(v.clone()), v.len()),
-                DData::Num(v) => (DKind::Num(v.clone()), v.len()),
-                DData::Flag(v) => (DKind::Flag(v.clone()), v.len()),
-            };
-            if len != n {
-                return Err(format!("derived column {}.{} has {len} rows, table has {n}", d.table, d.name));
-            }
-            let idx = ix.dcols.len();
-            ix.dcols.push(Dcol { table, name: d.name, kind, tri: None });
-            if let Some(g) = d.tri_group {
-                match groups.iter_mut().find(|x| x.0 == g) {
-                    Some(x) => {
-                        if x.1 != table {
-                            return Err(format!("trigram group {g} spans tables"));
-                        }
-                        x.2.push(idx)
-                    }
-                    None => groups.push((g, table, vec![idx])),
-                }
-            }
-        }
-        for (ti, t) in sc.tables.iter().enumerate() {
-            for (ci, c) in t.columns.iter().enumerate() {
-                if c.index == IndexKind::Text && c.ty == ColType::Str && !ix.dcols.iter().any(|d| d.table == ti && d.name == c.name) {
-                    if let ColData::Str(v) = &store.tables[ti].cols[ci] {
-                        let mut a = Arena::default();
-                        v.iter().for_each(|s| a.push(&crate::search::fold(s.as_deref().unwrap_or(""))));
-                        let idx = ix.dcols.len();
-                        ix.dcols.push(Dcol { table: ti, name: c.name.clone(), kind: DKind::Text(a), tri: None });
-                        groups.push((format!("\u{1}{ti}.{}", c.name), ti, vec![idx]));
-                    }
-                }
-            }
-        }
-        for (_, table, members) in groups {
-            let n = store.tables[table].rows();
-            let mut both = Arena::default();
-            for i in 0..n {
-                let parts: Vec<&str> = members.iter().map(|&m| if let DKind::Text(a) = &ix.dcols[m].kind { a.get(i) } else { "" }).collect();
-                both.push(&parts.join("\u{0}"));
-            }
-            let live = &ix.tlive[table];
-            let tri = Trigrams::build(&both, |i| live[i], stop_fraction, stop_min);
-            let id = ix.tris.len();
-            ix.tris.push(tri);
-            for m in members {
-                ix.dcols[m].tri = Some(id);
-            }
-        }
-        Ok(ix)
+        Ok(GIndex { store, hooks, primary, parent_ref, parts, tlive, maps, live_p })
     }
 
     // ------------------------------------------------------------ helpers (also for dialect hooks) ---
@@ -300,7 +397,7 @@ impl<'a> GIndex<'a> {
             None => std::iter::once(self.primary).chain((0..self.store.tables.len()).filter(|&t| t != self.primary)).collect(),
         };
         for &t in &order {
-            if let Some(i) = self.dcols.iter().position(|d| d.table == t && d.name == col) {
+            if let Some(i) = self.p().dcols.iter().position(|d| d.table == t && d.name == col) {
                 return Ok(Field { table: t, src: Src::Derived(i) });
             }
         }
@@ -368,7 +465,7 @@ impl<'a> GIndex<'a> {
 
     pub fn text_arena(&self, field: &str) -> Result<&Arena, String> {
         match self.resolve(field)?.src {
-            Src::Derived(i) => match &self.dcols[i].kind {
+            Src::Derived(i) => match &self.p().dcols[i].kind {
                 DKind::Text(a) => Ok(a),
                 _ => Err(format!("{field} is not a text column")),
             },
@@ -380,11 +477,11 @@ impl<'a> GIndex<'a> {
     pub fn text_find_rows(&self, field: &str, needle: &str) -> Result<Vec<u32>, String> {
         let f = self.resolve(field)?;
         let Src::Derived(i) = f.src else { return Err(format!("{field} is not a text-indexed column")) };
-        let d = &self.dcols[i];
+        let d = &self.p().dcols[i];
         let DKind::Text(a) = &d.kind else { return Err(format!("{field} is not a text column")) };
         let live = &self.tlive[d.table];
         Ok(match d.tri {
-            Some(t) => self.tris[t].find(a, &|r| live[r], needle),
+            Some(t) => self.p().tris[t].find(a, &|r| live[r], needle),
             None => (0..a.len()).filter(|&r| live[r] && a.get(r).contains(needle)).map(|r| r as u32).collect(),
         })
     }
@@ -403,7 +500,7 @@ impl<'a> GIndex<'a> {
             _ => usize::MAX,
         });
         Ok(match f.src {
-            Src::Derived(i) => match &self.dcols[i].kind {
+            Src::Derived(i) => match &self.p().dcols[i].kind {
                 DKind::Text(a) => Acc::Str(Box::new(move |r| Some(a.get(r)))),
                 DKind::Mask(v) => Acc::Mask(Box::new(move |r| Some(v[r]))),
                 DKind::Num(v) => Acc::Num(Box::new(move |r| v[r])),

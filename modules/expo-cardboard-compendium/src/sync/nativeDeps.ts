@@ -31,7 +31,7 @@ export const nativeDeps: SyncDeps = {
     new Directory(uri(dir)).create({ intermediates: true, idempotent: true });
   },
   engine: {
-    open: (coqd, coqs) => call('open', { coqd, coqs }),
+    open: (coqd, coqi) => call('open', { coqd, coqi }),
     info: () => call('info'),
     applyPatch: (path) => call('applyPatch', { path }),
     applyIndexDelta: (path) => call('applyIndexDelta', { path }),

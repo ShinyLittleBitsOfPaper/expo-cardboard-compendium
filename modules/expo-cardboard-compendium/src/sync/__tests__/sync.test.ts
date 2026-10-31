@@ -33,16 +33,16 @@ function release(day: number, o: { chainFrom?: number[]; epoch?: number; pad?: n
     return {
       from: `S${from}`, to: `S${from + 1}`, at: `2026-10-0${from + 1}T22:00:00Z`,
       patch: asset(files, `data-r${from + 1}`, `cards-S${from}-to-S${from + 1}.coqp`, Buffer.from(`PATCH:${from + 1}`)),
-      index_delta: o.noDelta ? null : asset(files, `data-r${from + 1}`, `cards-S${from}-to-S${from + 1}.coqsd`, Buffer.from(`IDXD:${from + 1}`)),
+      index_delta: o.noDelta ? null : asset(files, `data-r${from + 1}`, `cards-S${from}-to-S${from + 1}.coqid`, Buffer.from(`IDXD:${from + 1}`)),
     };
   });
   const manifest: Manifest = {
     manifest_version: 1, generated_at: `2026-10-0${day}T22:00:00Z`, run: `data-r${day}`, epoch: o.epoch ?? 1, rebase: patches.length === 0,
-    min_client_format: { coqd: o.minCoqd ?? 2, coqs: 1, coqr: 1 },
+    min_client_format: { coqd: o.minCoqd ?? 2, coqi: 1, coqr: 1 },
     cards: {
       stamp: `S${day}`, format: 2, min_reader: 2,
       file: asset(files, 'data-latest', `cards-S${day}.coqd`, d),
-      index: { ...asset(files, 'data-latest', `cards-S${day}.coqs.zst`, Buffer.concat([Buffer.from('ZST!'), idxRaw])), encoding: 'zstd', raw_size: idxRaw.length, raw_sha256: sha(idxRaw) },
+      index: { ...asset(files, 'data-latest', `cards-S${day}.coqi.zst`, Buffer.concat([Buffer.from('ZST!'), idxRaw])), encoding: 'zstd', raw_size: idxRaw.length, raw_sha256: sha(idxRaw) },
       patches,
     },
     prices: { stamp: `P${day}`, format: 1, min_reader: 1, file: asset(files, 'data-latest', `prices-P${day}.coqr`, Buffer.from(`prices-${day}`)), patches: [] },
@@ -79,11 +79,11 @@ function world(rel: Release) {
         const b = fs.get(coqd);
         if (!b) throw new Error('no dataset');
         open = { sha: sha(b) };
-        return { datasetSha256: open.sha, index: 'coqs' };
+        return { datasetSha256: open.sha, index: 'coqi' };
       },
       async info() {
         if (!open) throw new Error('engine not open');
-        return { datasetSha256: open.sha, index: 'coqs' };
+        return { datasetSha256: open.sha, index: 'coqi' };
       },
       async applyPatch(p) {
         const b = fs.get(p)!;
@@ -195,7 +195,7 @@ test('sync: first install downloads, verifies, unpacks the index and records sta
   const r = await runSync(w.deps, { dir: DIR, manifestUrl: 'https://m/manifest.json' });
   assert.deepEqual([r.status, r.reason, r.prices, r.changed], ['full', 'no_local_data', 'updated', true]);
   assert.deepEqual(w.fs.get(P.coqd), dataset(1, 5000));
-  assert.deepEqual(w.fs.get(P.coqs), Buffer.concat([Buffer.from('IDX:'), dataset(1, 5000)]));
+  assert.deepEqual(w.fs.get(P.coqi), Buffer.concat([Buffer.from('IDX:'), dataset(1, 5000)]));
   assert.deepEqual(w.fs.get(P.coqr), Buffer.from('prices-1'));
   assert.deepEqual(JSON.parse(w.text.get(P.state)!), state(1));
   assert.deepEqual(noTemp(w.fs), []);
@@ -209,7 +209,7 @@ test('sync: next day applies the patch chain and the index deltas, then is idemp
   w.log.length = 0;
   const r = await runSync(w.deps, { dir: DIR });
   assert.deepEqual([r.status, r.patches, r.prices], ['patched', 2, 'updated']);
-  assert.deepEqual(w.log.filter((l) => !l.startsWith('GET')), ['DL cards-S1-to-S2.coqp', 'applyPatch', 'DL cards-S1-to-S2.coqsd', 'applyIndexDelta', 'DL cards-S2-to-S3.coqp', 'applyPatch', 'DL cards-S2-to-S3.coqsd', 'applyIndexDelta', 'DL prices-P3.coqr']);
+  assert.deepEqual(w.log.filter((l) => !l.startsWith('GET')), ['DL cards-S1-to-S2.coqp', 'applyPatch', 'DL cards-S1-to-S2.coqid', 'applyIndexDelta', 'DL cards-S2-to-S3.coqp', 'applyPatch', 'DL cards-S2-to-S3.coqid', 'applyIndexDelta', 'DL prices-P3.coqr']);
   assert.deepEqual(w.fs.get(P.coqd), dataset(3, 5000));
   assert.deepEqual(JSON.parse(w.text.get(P.state)!), state(3));
   assert.deepEqual(noTemp(w.fs), []);

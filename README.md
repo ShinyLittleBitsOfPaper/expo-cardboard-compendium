@@ -2,7 +2,7 @@
 
 A Rust toolchain and Expo module for fast, offline, Scryfall-syntax card search on a phone.
 
-- `coqc` compiles Scryfall bulk card data into a compact, lossless dataset (`.coqd`), a search index (`.coqs`),
+- `coqc` compiles Scryfall bulk card data into a compact, lossless dataset (`.coqd`), a search index (`.coqi`),
   price tables, and small daily patches/deltas for each (see `docs/`).
 - `coqc-engine` (library `coqe`) opens those files, searches, looks up cards and applies updates behind a one-function C ABI.
 - `modules/expo-cardboard-compendium` is the Expo module (TypeScript API, Android, iOS) over that engine. Unbuilt scaffold; see `docs/engine.md`.
@@ -55,7 +55,7 @@ See `docs/roadmap.md` for what is planned next (data pipeline, client sync, engi
 - `crates/format/src/schema.rs`, `table.rs`, `coqd.rs`: generic schema, columnar table store, and the COQD v3 container (`coqd.rs` header documents the layout); `patch.rs`: COQP v2 row patches over stores
 - `crates/mtg`: `coqc-mtg` (the Magic dialect: Scryfall ingestion `ingest.rs`, MTGJSON price ingestion `prices.rs`, Scryfall query syntax `parse.rs`, card JSON `json.rs`, `synth.rs`)
 - `crates/compiler`: `coqc` (library + CLI)
-- `crates/format/src/search.rs`: search index + query plan; `search/coqs.rs`: `.coqs` serialization + deltas (docs/search.md)
+- `crates/format/src/search.rs`: search index + query plan; `search/coqi.rs`: `.coqi` serialization + deltas (docs/search.md)
 - `crates/format/src/prices.rs`, `crates/mtg/src/prices.rs`: price dataset (docs/prices.md); `scripts/daily-prices.sh`
 - `scripts/fetch-bulk.sh`: bulk download with Scryfall-friendly headers; skips when updated_at is unchanged
 - `docs/format.md`: file format spec; `docs/phase0.md`: findings, open questions, next steps

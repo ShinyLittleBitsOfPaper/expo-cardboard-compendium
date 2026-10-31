@@ -3,7 +3,7 @@
 Status 2026-10-27, version 0.0.2. Decisions marked **Decision** carry a proposed default; change them here before building.
 
 ## Where we are
-Done and tested: compiler (`coqc`), `.coqd` cards (v2) with record-level patches, `.coqs` search index + deltas, `.coqr/.coqx` prices
+Done and tested: compiler (`coqc`), `.coqd` cards (v2) with record-level patches, `.coqi` search index + deltas, `.coqr/.coqx` prices
 (MTGJSON) + deltas, Rust engine behind a JSON C ABI, Expo module (Android verified on an x86 emulator inside slbop: import, open, search),
 tag-driven CI for the module (`native.yml`), local scripts `daily.sh` / `daily-prices.sh`.
 Not done: automated publishing (no cron), client-side download/update flow, prices in the engine, real-device memory/speed numbers,
@@ -15,7 +15,7 @@ iOS library, conformance testing against Scryfall's own search results, publishe
 publish, manifest last, delete old full files, prune), `.github/workflows/data.yml`. `scripts/test-data-pipeline.sh` runs the whole
 flow offline (synthetic cards, mock `gh`) including a simulated client walking day 1 -> day 3 through the chain; prices there are
 stand-in files. Remaining for the exit criteria: a `publish=false` dry run on GitHub, then three scheduled runs. Needs Scryfall's
-reply before the first real publish. The index is published as `cards-<stamp>.coqs.zst` (4.74 MiB vs 21.9 MiB raw): GitHub serves
+reply before the first real publish. The index is published as `cards-<stamp>.coqi.zst` (4.74 MiB vs 21.9 MiB raw): GitHub serves
 release assets as uploaded, with no transparent compression, so clients download the .zst and decompress it themselves (Milestone 2).
 Goal: a scheduled GitHub Action compiles, verifies and publishes data; clients can find it from one stable URL.
 
@@ -32,10 +32,10 @@ skipped), so the job is idempotent: it exits cleanly if the bulk `updated_at` is
 
 Release layout:
 - **`data-latest`** (one rolling release, fixed URL): `manifest.json` plus the current full files `cards-<stamp>.coqd`,
-  `cards-<stamp>.coqs.zst`, `prices-<date>.coqr`. File names carry the stamp, so a new run uploads the new files first, the manifest
+  `cards-<stamp>.coqi.zst`, `prices-<date>.coqr`. File names carry the stamp, so a new run uploads the new files first, the manifest
   last, and only then deletes the old full files: a client never sees a manifest pointing at a missing file.
 - **`data-<stamp>`** (one immutable prerelease per run, tag `data-YYYYMMDDHHMM`): the patches from the previous run
-  `cards-<prev>-to-<stamp>.coqp`, `.coqsd`, `prices-<old>-to-<new>.coqx`; kept 30 days, then the release and its tag are deleted.
+  `cards-<prev>-to-<stamp>.coqp`, `.coqid`, `prices-<old>-to-<new>.coqx`; kept 30 days, then the release and its tag are deleted.
 - `manifest.json`: format versions, epoch, current stamps, sha256 + size of every asset, the patch chain for the last 30 days (URLs into
   the `data-<stamp>` releases), `min_client_format`, `generated_at`, `rebase` flag.
 - Entry URL clients hard-code: `https://github.com/ShinyLittleBitsOfPaper/expo-cardboard-compendium/releases/download/data-latest/manifest.json`.
@@ -80,7 +80,7 @@ failure, never leave the app without a working dataset. Planning logic is pure a
 2. Prices in the engine: `openPrices`, `getPrices(rows)`, `applyPriceDelta`, and price terms in search (`usd>=`, `eur<`) now that data exists.
 3. Batch helpers for user data: `getByScryfallIds(ids[])`, `rowsOf(ids[])`, persistent named sets; row tombstones surface as `null`.
 4. Sort and uniqueness controls slbop needs (`order:`, `unique:`, `prefer:`): audit against the queries slbop actually issues today.
-5. Robustness: fuzz/malformed-input tests for every reader (`.coqd/.coqs/.coqr` and all patch formats), no panics across the C ABI.
+5. Robustness: fuzz/malformed-input tests for every reader (`.coqd/.coqi/.coqr` and all patch formats), no panics across the C ABI.
 6. iOS: build the xcframework (macOS runner capacity; retry or another runner label), then build it in an iOS app once.
 7. Conformance corpus: a few hundred queries whose result sets are compared against Scryfall's own search on the same day (rate-limited,
    with a UA), run on demand; the list of known differences goes in `docs/search.md`.
@@ -91,11 +91,11 @@ permission is refused), and keep the "dataset-agnostic" direction as a design no
 
 ## Measurements (2026-10-27, cards-202610270905, 119,339 printings)
 - `.coqp` 0.26 MB vs 29.73 MB full; `.coqx` 0.11 MB vs 0.36 MB full `.coqr`; index delta 0.27 MB.
-- `.coqs` 21.9 MB on disk (raw, mappable; compare 4.7 MB whole-file zstd). Per-section zstd: text_trigrams 2.22, name_trigrams 0.73, full_texts 0.72, texts 0.66, names x3 0.88, printing_cols 0.27, rest <0.2 (~5.9 MB). Raw bulk is `full_texts` 6.2 + `texts` 5.0 + `text_trigrams` 3.7. Download cost is small; the cost is on-device disk (~52 MB for .coqd + .coqs).
+- `.coqi` 21.9 MB on disk (raw, mappable; compare 4.7 MB whole-file zstd). Per-section zstd: text_trigrams 2.22, name_trigrams 0.73, full_texts 0.72, texts 0.66, names x3 0.88, printing_cols 0.27, rest <0.2 (~5.9 MB). Raw bulk is `full_texts` 6.2 + `texts` 5.0 + `text_trigrams` 3.7. Download cost is small; the cost is on-device disk (~52 MB for .coqd + .coqi).
 - Device (emulator): open under 1 s by feel (no logged number); default search ~4k matches in 545 ms.
 
 ## Measurements still needed (from your machine)
-- Real `.coqp` and `.coqsd` sizes between two consecutive releases (`ls -l data/daily/patches`), and `.coqr/.coqx` sizes.
+- Real `.coqp` and `.coqid` sizes between two consecutive releases (`ls -l data/daily/patches`), and `.coqr/.coqx` sizes.
 - Open time and a search time from the device (Settings > Card engine), plus the reported `index` value.
 
 ## After this: slbop (summary, see slbop TODO #104)

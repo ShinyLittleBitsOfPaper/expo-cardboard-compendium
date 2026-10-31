@@ -1,4 +1,5 @@
 use coqc::{compile, synth, verify, Options, RowOrder};
+use coqc_format::coqi;
 use coqc_format::coqd::{block_table, parse};
 use coqc_mtg::{read, write};
 use sha2::{Digest, Sha256};
@@ -22,17 +23,17 @@ USAGE:
   coqc search  <dataset.coqd> <query words...> [--plan '<json Query>'] [--cards] [--limit N] [--offset N]
                                                    run a query (quick syntax: t:instant c>=r mv<=2 -o:flying \"bolt\")
   coqc index-stats <dataset.coqd>                  derived search index: build time, sizes, stop-grams
-  coqc index-build <dataset.coqd> -o <out.coqs>    serialize the search index (compile-time artifact); sizes + load check
-  coqc index-diff  <old> <new> [-o <delta.coqsd>]  index delta between two releases (.coqd or .coqs); replay-verified
-  coqc index-apply <old.coqs> <delta.coqsd> -o <new.coqs>   replay a delta (hash-verified)
+  coqc index-build <dataset.coqd> -o <out.coqi>    serialize the search index (compile-time artifact); sizes + load check
+  coqc index-diff  <old> <new> [-o <delta.coqid>]  index delta between two releases (.coqd or .coqi); replay-verified
+  coqc index-apply <old.coqi> <delta.coqid> -o <new.coqi>   replay a delta (hash-verified)
   coqc idmap   <AllIdentifiers.json> -o <idmap.coqm>   MTGJSON uuid -> Scryfall id map (refresh rarely)
   coqc prices  <AllPricesToday.json> --cards <cards.coqd> --idmap <idmap.coqm> -o <prices.coqr>
   coqc prices-patch <old.coqr> <new.coqr> -o <p.coqx>  /  coqc prices-apply <old.coqr> <p.coqx> -o <new.coqr>
   coqc price   <prices.coqr> <cards.coqd> <card name>  show stored prices of every printing of a card
-  coqc zst     <in> -o <out> [--level N]           zstd-compress a file (the published index is .coqs.zst, level 19)
+  coqc zst     <in> -o <out> [--level N]           zstd-compress a file (the published index is .coqi.zst, level 19)
   coqc unzst   <in.zst> -o <out>                   decompress it
-  coqc manifest --cards <c.coqd> --index <c.coqs.zst> --prices <p.coqr> --run <data-tag> --at <ISO UTC> --keep-since <ISO UTC>
-               [--repo OWNER/REPO | --base-url URL] [--prev manifest.json] [--cards-patch f.coqp --index-delta f.coqsd]
+  coqc manifest --cards <c.coqd> --index <c.coqi.zst> --prices <p.coqr> --run <data-tag> --at <ISO UTC> --keep-since <ISO UTC>
+               [--repo OWNER/REPO | --base-url URL] [--prev manifest.json] [--cards-patch f.coqp --index-delta f.coqid]
                [--prices-patch f.coqx] [--rebase] -o manifest.json     (see docs/roadmap.md, Milestone 1)
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
@@ -296,67 +297,83 @@ fn cmd_synth(args: &[String]) {
     println!("wrote {w} synthetic cards ({}) to {}", mb(size), args[1]);
 }
 
+/// Load a `.coqd` as a store (the index and search commands never need the legacy records).
+fn load_store(path: &Path) -> (Vec<u8>, coqc_format::table::Store) {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| die(&format!("{}: {e}", path.display())));
+    let st = coqc_format::read_store(&bytes).unwrap_or_else(|e| die(&format!("{}: {e}", path.display())));
+    (bytes, st)
+}
+
+fn build_index_parts(st: &coqc_format::table::Store) -> coqc_format::gindex::IndexParts {
+    use coqc_format::dialect::Dialect;
+    let spec = coqc_mtg::Mtg.index_spec(st).unwrap_or_else(|e| die(&e));
+    coqc_format::gindex::GIndex::build_parts(st, spec, coqc_format::search::STOP_FRACTION, coqc_format::search::STOP_MIN).unwrap_or_else(|e| die(&e))
+}
+
+fn run_gquery(st: &coqc_format::table::Store, parts: &coqc_format::gindex::IndexParts, q: &coqc_format::gindex::GQuery) -> coqc_format::gindex::GResult {
+    use coqc_format::dialect::Dialect;
+    let ix = coqc_format::gindex::GIndex::with_parts(st, Some(coqc_mtg::Mtg.hooks()), parts).unwrap_or_else(|e| die(&e));
+    ix.search(q).unwrap_or_else(|e| die(&e))
+}
+
+const SAMPLE_QUERIES: [&str; 8] = ["bolt", "t:creature", "o:flying", "o:\"draw a card\"", "o:\"enters the battlefield\"", "o:ab", "c>=rg mv<=2", "o:destroy t:artifact"];
+
 fn cmd_index_stats(args: &[String]) {
-    use coqc_format::search::SearchIndex;
+    use coqc_format::dialect::Dialect;
     let path = args.first().unwrap_or_else(|| die("missing dataset"));
-    let (_, ds) = load(Path::new(path));
+    let (_, st) = load_store(Path::new(path));
     let t = Instant::now();
-    let ix = SearchIndex::build(&ds);
-    let ms = t.elapsed().as_millis();
-    let s = ix.stats();
-    println!("index build: {ms} ms (single thread, this machine)");
-    println!("oracle rows {}", s.oracle_rows);
-    println!("names : text {}  grams {}  stop {}  index ~{}", mb(s.name_bytes as u64), s.name_grams, s.name_stop, mb(s.name_index_bytes as u64));
-    println!("text  : text {}  grams {}  stop {}  index ~{}", mb(s.text_bytes as u64), s.text_grams, s.text_stop, mb(s.text_index_bytes as u64));
-    for q in ["bolt", "t:creature", "o:flying", "o:\"draw a card\"", "o:\"enters the battlefield\"", "o:ab", "c>=rg mv<=2", "o:destroy t:artifact"] {
-        let expr = coqc::quick::parse(q).unwrap_or_else(|e| die(&e));
-        let query = coqc_format::search::Query { expr, ..Default::default() };
+    let parts = build_index_parts(&st);
+    println!("index build: {} ms (single thread, this machine)", t.elapsed().as_millis());
+    for s in coqi::section_sizes(&parts, &st.schema) {
+        println!("  {:<24} raw {:>10}  zstd {:>10}", s.name, mb(s.raw as u64), mb(s.zstd as u64));
+    }
+    for q in SAMPLE_QUERIES {
+        let g = coqc_mtg::Mtg.parse_gquery(q).unwrap_or_else(|e| die(&e));
         let t = Instant::now();
-        let r = ix.search(&query);
+        let r = run_gquery(&st, &parts, &g);
         println!("  {q:<32} {:>7} prints  {:>6.1} ms", r.total, t.elapsed().as_secs_f64() * 1000.0);
     }
 }
 
 fn index_file(path: &str) -> Vec<u8> {
-    // returns the .coqs bytes: read as-is, or built from a .coqd
+    // returns the .coqi bytes: read as-is, or built from a .coqd
     let bytes = std::fs::read(path).unwrap_or_else(|e| die(&format!("{path}: {e}")));
-    if bytes.starts_with(b"COQS") {
+    if bytes.starts_with(b"COQI") {
         return bytes;
     }
-    let ds = read(&bytes).unwrap_or_else(|e| die(&format!("{path}: {e}")));
-    let ix = coqc_format::search::SearchIndex::build(&ds);
-    coqc_format::search::coqs::serialize(&ix, &Sha256::digest(&bytes).into())
+    coqc::build_index_file(&bytes).unwrap_or_else(|e| die(&format!("{path}: {e}")))
 }
 
 fn cmd_index_build(args: &[String]) {
-    use coqc_format::search::{coqs, SearchIndex};
+    use coqc_format::dialect::Dialect;
     let path = args.first().unwrap_or_else(|| die("missing dataset"));
-    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <out.coqs>"));
-    let (bytes, ds) = load(Path::new(path));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <out.coqi>"));
+    let (bytes, st) = load_store(Path::new(path));
     let t = Instant::now();
-    let ix = SearchIndex::build(&ds);
+    let parts = build_index_parts(&st);
     println!("index build: {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
-    let file = coqs::serialize(&ix, &Sha256::digest(&bytes).into());
-    println!("{:<16} {:>12} {:>12}", "section", "raw", "zstd");
+    let file = coqi::serialize(&parts, &st.schema, &Sha256::digest(&bytes).into());
+    println!("{:<24} {:>12} {:>12}", "section", "raw", "zstd");
     let (mut r, mut z) = (0, 0);
-    for s in coqs::section_sizes(&ix) {
-        println!("{:<16} {:>12} {:>12}", s.name, mb(s.raw as u64), mb(s.zstd as u64));
+    for s in coqi::section_sizes(&parts, &st.schema) {
+        println!("{:<24} {:>12} {:>12}", s.name, mb(s.raw as u64), mb(s.zstd as u64));
         r += s.raw;
         z += s.zstd;
     }
-    let whole = coqs::compress(&file).len();
-    println!("{:<16} {:>12} {:>12}   (file {}, whole-file zstd {}; dataset {})", "total", mb(r as u64), mb(z as u64), mb(file.len() as u64), mb(whole as u64), mb(bytes.len() as u64));
+    let whole = coqi::compress(&file).len();
+    println!("{:<24} {:>12} {:>12}   (file {}, whole-file zstd {}; dataset {})", "total", mb(r as u64), mb(z as u64), mb(file.len() as u64), mb(whole as u64), mb(bytes.len() as u64));
     let t = Instant::now();
-    let (back, dsha) = coqs::deserialize(&file).unwrap_or_else(|e| die(&format!("reload failed: {e}")));
+    let (back, dsha) = coqi::deserialize(&file, &st.schema).unwrap_or_else(|e| die(&format!("reload failed: {e}")));
     println!("reload (owned copy): {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
-    if coqs::serialize(&back, &dsha) != file {
+    if coqi::serialize(&back, &st.schema, &dsha) != file {
         die("round trip differs");
     }
     let (mut agree, mut total) = (0, 0);
-    for q in ["bolt", "t:creature", "o:flying", "o:\"draw a card\"", "o:\"enters the battlefield\"", "o:ab", "c>=rg mv<=2", "o:destroy t:artifact"] {
-        let query = coqc_mtg::parse::parse(q).unwrap_or_else(|e| die(&format!("{q}: {e}")));
+    for q in SAMPLE_QUERIES {
+        let g = coqc_mtg::Mtg.parse_gquery(q).unwrap_or_else(|e| die(&format!("{q}: {e}")));
         total += 1;
-        agree += (ix.search(&query).rows == back.search(&query).rows) as usize;
+        agree += (run_gquery(&st, &parts, &g).rows == run_gquery(&st, &back, &g).rows) as usize;
     }
     println!("round trip: byte-identical; {agree}/{total} sample queries agree");
     if agree != total {
@@ -367,26 +384,25 @@ fn cmd_index_build(args: &[String]) {
 }
 
 fn cmd_index_diff(args: &[String]) {
-    use coqc_format::search::coqs;
     if args.len() < 2 {
         die("usage: coqc index-diff <old> <new> [-o delta]");
     }
     let old = index_file(&args[0]);
     let new = index_file(&args[1]);
     let t = Instant::now();
-    let (delta, info) = coqs::make_delta(&old, &new).unwrap_or_else(|e| die(&e.to_string()));
+    let (delta, info) = coqi::make_delta(&old, &new).unwrap_or_else(|e| die(&e.to_string()));
     println!("delta built in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
-    println!("{:<16} {:>9} {:>12} {:>12}", "table", "changed", "raw", "zstd");
+    println!("{:<24} {:>9} {:>12} {:>12}", "section", "changed", "raw", "zstd");
     for tb in &info.tables {
-        println!("{:<16} {:>9} {:>12} {:>12}", tb.name, tb.changed, mb(tb.raw as u64), mb(tb.zstd as u64));
+        println!("{:<24} {:>9} {:>12} {:>12}", tb.name, tb.changed, mb(tb.raw as u64), mb(tb.zstd as u64));
     }
     println!("trigram postings: {} appended, {} new grams, {} replaced, {} removed", info.tri_appended, info.tri_new, info.tri_replaced, info.tri_removed);
-    let again = coqs::apply_delta(&old, &delta).unwrap_or_else(|e| die(&format!("replay failed: {e}")));
+    let again = coqi::apply_delta(&old, &delta).unwrap_or_else(|e| die(&format!("replay failed: {e}")));
     if again != new {
         die("replay differs from target");
     }
     println!("delta: raw {} -> {} (whole delta zstd); replay reproduces the new index byte-identically", mb(info.raw as u64), mb(delta.len() as u64));
-    println!("for scale: new index file {} (zstd {}), old {}", mb(new.len() as u64), mb(coqs::compress(&new).len() as u64), mb(old.len() as u64));
+    println!("for scale: new index file {} (zstd {}), old {}", mb(new.len() as u64), mb(coqi::compress(&new).len() as u64), mb(old.len() as u64));
     if let Some(out) = flag_value(args, "-o") {
         std::fs::write(&out, &delta).unwrap_or_else(|e| die(&e.to_string()));
         println!("wrote {out}");
@@ -394,22 +410,22 @@ fn cmd_index_diff(args: &[String]) {
 }
 
 fn cmd_index_apply(args: &[String]) {
-    use coqc_format::search::coqs;
     if args.len() < 2 {
-        die("usage: coqc index-apply <old.coqs> <delta> -o <new.coqs>");
+        die("usage: coqc index-apply <old.coqi> <delta.coqid> -o <new.coqi>");
     }
     let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o"));
     let (old, delta) = (rd(&args[0]), rd(&args[1]));
-    let n = coqs::apply_delta(&old, &delta).unwrap_or_else(|e| die(&e.to_string()));
+    let n = coqi::apply_delta(&old, &delta).unwrap_or_else(|e| die(&e.to_string()));
     std::fs::write(&out, &n).unwrap_or_else(|e| die(&e.to_string()));
     println!("applied: {out} ({}), hash verified", mb(n.len() as u64));
 }
 
 fn cmd_search(args: &[String]) {
-    use coqc_format::search::{Query, SearchIndex, Unique};
+    use coqc_format::dialect::Dialect;
+    use coqc_format::gindex::GQuery;
     let path = args.first().unwrap_or_else(|| die("missing dataset"));
-    let (_, ds) = load(Path::new(path));
-    let mut query: Query = match flag_value(args, "--plan") {
+    let (_, st) = load_store(Path::new(path));
+    let mut query: GQuery = match flag_value(args, "--plan") {
         Some(j) => serde_json::from_str(&j).unwrap_or_else(|e| die(&format!("bad --plan: {e}"))),
         None => {
             let mut words = Vec::new();
@@ -422,30 +438,31 @@ fn cmd_search(args: &[String]) {
                 }
                 i += 1;
             }
-            coqc_mtg::parse::parse(&words.join(" ")).unwrap_or_else(|e| die(&e.0))
+            coqc_mtg::Mtg.parse_gquery(&words.join(" ")).unwrap_or_else(|e| die(&e))
         }
     };
     if args.iter().any(|a| a == "--cards") {
-        query.unique = Unique::Cards;
+        query.unique_parent = true;
     }
     query.limit = Some(flag_value(args, "--limit").map_or(20, |v| v.parse().unwrap_or_else(|_| die("bad --limit"))));
     query.offset = flag_value(args, "--offset").map_or(0, |v| v.parse().unwrap_or_else(|_| die("bad --offset")));
     let t = Instant::now();
-    let ix = SearchIndex::build(&ds);
+    let parts = build_index_parts(&st);
     let built = t.elapsed();
     let t = Instant::now();
-    let r = ix.search(&query);
+    let r = run_gquery(&st, &parts, &query);
     let took = t.elapsed();
     println!("{} matches (index {} ms, query {:.2} ms)", r.total, built.as_millis(), took.as_secs_f64() * 1000.0);
     for row in r.rows {
-        let p = &ds.printings[row as usize];
+        let p = coqc_mtg::tables::printing_at(&st, row as usize).unwrap_or_else(|e| die(&e.to_string()));
+        let o = coqc_mtg::tables::oracle_at(&st, p.oracle_row as usize).unwrap_or_else(|e| die(&e.to_string()));
         println!(
             "  {:>6}  {} {:<5} {:<5} {}",
             row,
             p.released_at.map_or("-".into(), |d| coqc_mtg::json::released_to_string(d)),
             p.set_code.as_deref().unwrap_or("-"),
             p.collector_number.as_deref().unwrap_or("-"),
-            ds.oracle[p.oracle_row as usize].name.as_deref().unwrap_or("?")
+            o.name.as_deref().unwrap_or("?")
         );
     }
 }
@@ -569,8 +586,8 @@ fn cmd_manifest(args: &[String]) {
     let parsed = parse(&cb).unwrap_or_else(|e| die(&format!("{cards_p}: {e}")));
     let (format, min_reader) = (u16_at(&cb, 4), u16_at(&cb, 6));
     let raw = zstd::decode_all(&rd(&index_p)[..]).unwrap_or_else(|e| die(&format!("{index_p}: not zstd: {e}")));
-    if raw.get(..4) != Some(b"COQS") {
-        die(&format!("{index_p}: not a compressed .coqs"));
+    if raw.get(..4) != Some(b"COQI") {
+        die(&format!("{index_p}: not a compressed .coqi"));
     }
     // The index must belong to the cards file (its header carries the dataset's SHA-256).
     if raw.get(6..38).map(|s| s.iter().map(|b| format!("{b:02x}")).collect::<String>()) != Some(sha_hex(&cb)) {

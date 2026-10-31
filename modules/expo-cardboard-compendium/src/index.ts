@@ -6,7 +6,7 @@ export interface EngineInfo {
   printings: number;
   oracleCards: number;
   datasetSha256: string;
-  index: 'coqs' | 'built' | 'delta' | 'stale';
+  index: 'coqi' | 'built' | 'delta' | 'stale';
   sets: Record<string, number>;
 }
 export interface SearchOptions {
@@ -21,8 +21,8 @@ export interface SearchResult {
   cards?: Card[];
 }
 
-/** Paths are plain filesystem paths (not file:// URIs). `coqs` is created/refreshed if missing or stale. */
-export const open = (coqd: string, coqs?: string) => call<EngineInfo>('open', { coqd, coqs });
+/** Paths are plain filesystem paths (not file:// URIs). `coqi` is created/refreshed if missing or stale. */
+export const open = (coqd: string, coqi?: string) => call<EngineInfo>('open', { coqd, coqi });
 export const close = () => call<null>('close');
 export const info = () => call<EngineInfo>('info');
 export const search = (query: string, o: SearchOptions = {}) => call<SearchResult>('search', { query, ...o });
@@ -33,7 +33,7 @@ export const registerSet = (name: string, ids: string[]) =>
   call<{ resolved: number; unknown: number }>('registerSet', { name, ids });
 /** Apply a dataset patch (.coqp) in place; the index is stale until applyIndexDelta or the next search. */
 export const applyPatch = (path: string) => call<EngineInfo>('applyPatch', { path });
-/** Apply the matching index delta (.coqsd) after applyPatch. If it fails, the index is rebuilt on demand. */
+/** Apply the matching index delta (.coqid) after applyPatch. If it fails, the index is rebuilt on demand. */
 export const applyIndexDelta = (path: string) => call<EngineInfo>('applyIndexDelta', { path });
 
 // --- Data sync (docs/roadmap.md, Milestone 2) -------------------------------------------------------------------

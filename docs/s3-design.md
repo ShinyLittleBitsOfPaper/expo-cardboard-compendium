@@ -74,3 +74,10 @@ Single-line `-t:land` re-run (expect 37848) and the real-data timing loop again 
   t:creature 13.9/15.5, c:rg 0.21/0.37, o:flying 10.2/12.2, mv>=5 11.0/12.7, r:mythic 0.79/0.91, s:lea 5.4/1.2, -t:land 15.5/15.8,
   legendary creature 2.6/1.1. Per-row closures cost ~10-15% on full scans; a typed fast path for hot fields is the S3b fix if the real-data
   numbers need it.
+
+## S3b status (0.0.2-19, built)
+- `.coqi` v2 (`crates/format/src/coqi.rs`): header (magic, version 2, dataset SHA-256, section count + directory), meta section (table, column, kind, trigram id per column), one raw section per column, one per trigram table. `.coqid` delta = per-section row diff + posting diff; requires identical meta.
+- `GIndex::build_parts` (expensive) / `GIndex::with_parts` (cheap re-attach, validates column lengths against the tables). Engine keeps `IndexParts` and attaches per search; a mismatching or foreign `.coqi` is rebuilt.
+- Trimmed auto text columns (6 MTG columns). `derive_store` reads the `Store` directly. Engine/CLI no longer need `Dataset`.
+- Not done: typed fast path for hot fields (only if real-data latency needs it), schema `ordered` enum flag, `.coqi` memory-mapping, S3c (delete `Dataset`, old `search.rs`/`coqs.rs`, `container.rs`; docs rewrite), S3d (regex, `is:`/`f:`/`pow`/`tou`).
+- Synthetic 120k: .coqi 20.57 MB raw, 2.05 MB zstd; build 1.32 s vs old 0.94 s; queries (ms, old/generic): bolt 0.21/0.45, t:creature 12.4/12.9, o:flying 8.3/10.3, mv>=5 5.3/6.6, s:lea 2.3/0.65, -t:land 11.9/12.8.

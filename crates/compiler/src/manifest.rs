@@ -24,7 +24,7 @@ pub struct Asset {
 }
 
 /// The search index ships zstd-compressed (GitHub does not compress release assets); the raw fields describe the
-/// decompressed `.coqs`, which is what an index delta's base/target hashes refer to.
+/// decompressed `.coqi`, which is what an index delta's base/target hashes refer to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexAsset {
     #[serde(flatten)]
@@ -90,7 +90,7 @@ pub struct Manifest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MinFormat {
     pub coqd: u16,
-    pub coqs: u16,
+    pub coqi: u16,
     pub coqr: u16,
 }
 
@@ -154,7 +154,7 @@ pub fn build(inp: &Inputs, prev: Option<&Manifest>) -> Result<Manifest, String> 
     let base = inp.base_url.trim_end_matches('/');
     let c = &inp.cards;
     let p = &inp.prices;
-    let min_client_format = MinFormat { coqd: c.min_reader, coqs: c.index_version, coqr: p.min_reader };
+    let min_client_format = MinFormat { coqd: c.min_reader, coqi: c.index_version, coqr: p.min_reader };
 
     // A usable previous manifest has the same epoch and card format; otherwise clients must start over.
     let prev_ok = prev.filter(|m| m.epoch == c.epoch && m.cards.format == c.format);
@@ -272,9 +272,9 @@ mod tests {
                 format: 2,
                 min_reader: 2,
                 file: me(&format!("cards-{stamp}.coqd")),
-                index: IndexMeasured { file: me(&format!("cards-{stamp}.coqs.zst")), raw_size: 100, raw_sha256: "ab".into() },
+                index: IndexMeasured { file: me(&format!("cards-{stamp}.coqi.zst")), raw_size: 100, raw_sha256: "ab".into() },
                 index_version: 1,
-                patch: Some((me(&format!("cards-{prev_stamp}-to-{stamp}.coqp")), Some(me(&format!("cards-{prev_stamp}-to-{stamp}.coqsd"))))),
+                patch: Some((me(&format!("cards-{prev_stamp}-to-{stamp}.coqp")), Some(me(&format!("cards-{prev_stamp}-to-{stamp}.coqid"))))),
             },
             prices: NewPrices {
                 stamp: pstamp.into(),
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(m2.prices.patches.len(), 1);
         let m3 = build(&inputs("S3", "S2", "P3", "P2", "26", 1), Some(&m2)).unwrap();
         assert_eq!(m3.cards.patches.iter().map(|x| (x.from.as_str(), x.to.as_str())).collect::<Vec<_>>(), [("S1", "S2"), ("S2", "S3")]);
-        assert_eq!(run_files(&m3), ["cards-S2-to-S3.coqp", "cards-S2-to-S3.coqsd", "prices-P2-to-P3.coqx"]);
+        assert_eq!(run_files(&m3), ["cards-S2-to-S3.coqp", "cards-S2-to-S3.coqid", "prices-P2-to-P3.coqx"]);
         // Links older than keep_since fall out of the window.
         let mut late = inputs("S4", "S3", "P4", "P3", "26", 1);
         late.keep_since = "2026-10-26T00:00:00Z".into();

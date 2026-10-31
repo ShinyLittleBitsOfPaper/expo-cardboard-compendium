@@ -59,13 +59,13 @@ part before the first comma) or generic "this land"/"this creature"/... (verifie
 Parser TODO: `~` in oracle text, `m:`/`mana:`, `is:`/`has:`/`f:`/`in:`/`b:`/`st:`/`lang:`, price keys, `a:`/`ft:`/`wm:`,
 `unique:art`, `prefer:`, regex, `include:extras` + default hiding of funny/vanguard/memorabilia, `keyword:`, `pow/tou/loy`.
 
-## Compile-time index (`.coqs`, implemented in -23; real-data numbers pending)
-Code: `crates/format/src/search/coqs.rs`. The compiler serializes `SearchIndex` next to the dataset; the header holds the
+## Compile-time index (`.coqi`, implemented in -23; real-data numbers pending)
+Code: `crates/format/src/search/coqi.rs`. The compiler serializes `SearchIndex` next to the dataset; the header holds the
 SHA-256 of the .coqd it was built from. Sections are raw, 8-byte aligned fixed-width arrays (mappable): meta, six oracle text
 arenas (names, names_n, names_s, types, texts, full_texts), oracle columns, printing columns, set, cn, name/text trigram tables
 (keys, offsets, stop-grams, postings). Distribution: zstd the file (or per section).
-- `coqc index-build x.coqd -o x.coqs` prints per-section raw/zstd sizes, whole-file zstd, reload time, a byte-identical round-trip check and sample-query agreement.
-- Delta: `coqc index-diff old new [-o d.coqsd]` (inputs .coqd or .coqs). Row tables carry changed/appended rows; trigram tables carry
+- `coqc index-build x.coqd -o x.coqi` prints per-section raw/zstd sizes, whole-file zstd, reload time, a byte-identical round-trip check and sample-query agreement.
+- Delta: `coqc index-diff old new [-o d.coqid]` (inputs .coqd or .coqi). Row tables carry changed/appended rows; trigram tables carry
   stop-gram add/remove and per-gram `append` (new list extends the old bytes), `replace`, `new`, `remove`. `index-apply` replays it;
   the result must hash to the target. Run on two consecutive releases (e.g. `scripts/daily.sh --force` ~12 h apart) for the real delta.
 - Open: a mapped (zero-copy) reader; today `deserialize` builds an owned `SearchIndex`. Arenas dominate size (texts and full_texts

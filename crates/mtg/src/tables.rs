@@ -261,3 +261,94 @@ pub fn write(ds: &Dataset) -> Result<(Vec<u8>, Vec<SectionStat>)> {
 pub fn read(bytes: &[u8]) -> Result<Dataset> {
     into_dataset(read_store(bytes)?)
 }
+
+// ------------------------------------------------------------- row access on a Store (S3b) ---
+
+/// The dataset-level metadata of a store (dictionaries, epoch, source date).
+pub fn meta_of(st: &Store) -> Meta {
+    let mut meta = Meta { cards_epoch: st.epoch, source_date: st.source_date, ..Default::default() };
+    meta.dropped_keys = st.prop("dropped_keys").map(|v| v.to_vec()).unwrap_or_default();
+    let mut d = st.dicts.iter().cloned();
+    meta.layouts = d.next().unwrap_or_default();
+    meta.rarities = d.next().unwrap_or_default();
+    meta.border_colors = d.next().unwrap_or_default();
+    meta.langs = d.next().unwrap_or_default();
+    meta.promo_types = d.next().unwrap_or_default();
+    meta.image_keys = d.next().unwrap_or_default();
+    meta.formats = d.next().unwrap_or_default();
+    meta
+}
+
+macro_rules! col {
+    ($st:expr, $t:expr, $i:expr, $v:ident) => {
+        match &$st.tables[$t].cols[$i] {
+            ColData::$v(v) => v,
+            _ => return Err(Error::Corrupt("column type")),
+        }
+    };
+}
+
+/// One oracle row as the legacy record (a tombstone for a tombstoned row). The store must use the MTG schema.
+pub fn oracle_at(st: &Store, i: usize) -> Result<OracleRecord> {
+    let id = col!(st, 0, 0, Uuid)[i];
+    if st.tables[0].tomb[i] {
+        return Ok(OracleRecord::tombstone(id));
+    }
+    Ok(OracleRecord {
+        tombstone: false,
+        oracle_id: id,
+        name: col!(st, 0, 1, Str)[i].clone(),
+        mana_cost: col!(st, 0, 2, Str)[i].clone(),
+        type_line: col!(st, 0, 3, Str)[i].clone(),
+        oracle_text: col!(st, 0, 4, Str)[i].clone(),
+        colors: col!(st, 0, 5, Int)[i].map(|x| x as u8),
+        color_identity: col!(st, 0, 6, Int)[i].map(|x| x as u8),
+        cmc: col!(st, 0, 7, Float)[i],
+        faces: opt_dec(&col!(st, 0, 8, Bytes)[i], decode_oracle_faces)?.flatten(),
+        extra: col!(st, 0, 9, Json)[i].clone(),
+    })
+}
+
+pub fn ranks_at(st: &Store, i: usize) -> Result<Ranks> {
+    Ok(Ranks { edhrec: col!(st, 1, 0, Int)[i].map(|x| x as u32), penny: col!(st, 1, 1, Int)[i].map(|x| x as u32) })
+}
+
+/// One printing row as the legacy record (a tombstone for a tombstoned row).
+pub fn printing_at(st: &Store, i: usize) -> Result<PrintingRecord> {
+    let id = col!(st, 2, 0, Uuid)[i];
+    if st.tables[2].tomb[i] {
+        return Ok(PrintingRecord::tombstone(id));
+    }
+    Ok(PrintingRecord {
+        tombstone: false,
+        scryfall_id: id,
+        oracle_row: col!(st, 2, 1, Ref)[i],
+        layout: col!(st, 2, 2, Enum)[i],
+        lang: col!(st, 2, 3, Enum)[i],
+        released_at: col!(st, 2, 4, Int)[i].map(|x| x as u32),
+        set_code: col!(st, 2, 5, Str)[i].clone(),
+        set_name: col!(st, 2, 6, Str)[i].clone(),
+        collector_number: col!(st, 2, 7, Str)[i].clone(),
+        rarity: col!(st, 2, 8, Enum)[i],
+        border_color: col!(st, 2, 9, Enum)[i],
+        promo: col!(st, 2, 10, Bool)[i],
+        reprint: col!(st, 2, 11, Bool)[i],
+        digital: col!(st, 2, 12, Bool)[i],
+        finishes: col!(st, 2, 13, Int)[i].map(|x| x as u8),
+        promo_types: col!(st, 2, 14, Set)[i].clone(),
+        legalities: opt_dec(&col!(st, 2, 15, Bytes)[i], decode_nibbles)?.flatten(),
+        flavor_text: col!(st, 2, 16, Str)[i].clone(),
+        artist: col!(st, 2, 17, Str)[i].clone(),
+        images: opt_dec(&col!(st, 2, 18, Bytes)[i], Images::decode)?.unwrap_or(Images::None),
+        faces: opt_dec(&col!(st, 2, 19, Bytes)[i], decode_printing_faces)?.flatten(),
+        extra: col!(st, 2, 20, Json)[i].clone(),
+    })
+}
+
+/// Check that a store carries the MTG schema (the row accessors above index its columns by position).
+pub fn check_schema(st: &Store) -> Result<()> {
+    if st.schema != mtg_schema() {
+        return Err(Error::Corrupt("not the MTG schema"));
+    }
+    st.check().map_err(|_| Error::Corrupt("inconsistent store"))
+}

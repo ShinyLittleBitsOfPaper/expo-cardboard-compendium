@@ -1,19 +1,19 @@
 # Engine and Expo module (0.0.1-24)
 
-Crate `coqc-engine` (lib `coqe`, `crates/engine`): opens a `.coqd` and its `.coqs`, answers searches, looks up cards, applies
+Crate `coqc-engine` (lib `coqe`, `crates/engine`): opens a `.coqd` and its `.coqi`, answers searches, looks up cards, applies
 updates. The only native entry point is the C ABI in `ffi.rs`: `coqe_call(method, argsJson) -> {"ok":..}|{"error":".."}` plus
 `coqe_free`. One global engine; call `open` first. `Engine::call` is the same dispatcher for Rust callers.
 
 | Method | Args | Result |
 |---|---|---|
-| `open` | `coqd`, `coqs?` | info. `.coqs` used only if its header dataset hash matches the `.coqd`; otherwise rebuilt and rewritten |
+| `open` | `coqd`, `coqi?` | info. `.coqi` used only if its header dataset hash matches the `.coqd`; otherwise rebuilt and rewritten |
 | `search` | `query`, `limit?`, `offset?`, `scope?`, `cards?` | `{total, rows, cards?}`; rows are printing rows (stable, append-only) |
 | `getCards` | `rows[]` | card JSON per row (`null` if tombstoned/out of range) |
 | `getByScryfallId` | `id` | card JSON or `null` |
 | `registerSet` | `name`, `ids[]` | `{resolved, unknown}`; later `search {scope: name}` can only match those printings |
 | `applyPatch` | `path` (.coqp) | replaces the .coqd atomically; index marked `stale` |
 | `sha256File` / `unzstFile` / `moveFile` / `removeFile` | `path` (`out`, `from`/`to`) | stateless (no open engine): streamed SHA-256, zstd decompress to a file, atomic replace, delete (missing is fine); used by `sync()` |
-| `applyIndexDelta` | `path` (.coqsd) | refused unless it targets the current dataset hash; on failure the next search rebuilds |
+| `applyIndexDelta` | `path` (.coqid) | refused unless it targets the current dataset hash; on failure the next search rebuilds |
 | `info` / `close` | | |
 
 Notes

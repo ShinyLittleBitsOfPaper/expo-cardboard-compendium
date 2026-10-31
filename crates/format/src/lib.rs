@@ -1,6 +1,7 @@
 //! COQD: a compact, block-compressed, lossless, schema-driven dataset format.
 pub mod codec;
 pub mod container;
+pub mod coqi;
 pub mod coqd;
 pub mod dialect;
 pub mod gindex;

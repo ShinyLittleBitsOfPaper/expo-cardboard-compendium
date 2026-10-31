@@ -1,4 +1,4 @@
-//! C ABI: one global engine, one JSON entry point. `coqe_call("open", {"coqd":..,"coqs":..})` first.
+//! C ABI: one global engine, one JSON entry point. `coqe_call("open", {"coqd":..,"coqi":..})` first.
 //! Returns a malloc'd UTF-8 JSON string `{"ok":...}` or `{"error":"..."}`; free it with `coqe_free`.
 
 use crate::Engine;
@@ -18,8 +18,8 @@ fn dispatch(method: &str, args: &str) -> Result<Value, String> {
     match method {
         "open" => {
             let coqd = a.get("coqd").and_then(Value::as_str).ok_or("missing coqd")?;
-            let coqs = a.get("coqs").and_then(Value::as_str).map(Path::new);
-            let e = Engine::open(Path::new(coqd), coqs)?;
+            let coqi = a.get("coqi").and_then(Value::as_str).map(Path::new);
+            let e = Engine::open(Path::new(coqd), coqi)?;
             let info = e.info();
             *g = Some(e);
             Ok(info)

@@ -1,17 +1,19 @@
-//! On-device engine over a COQD dataset + COQS search index.
+//! On-device engine over a COQD dataset + COQI search index.
 //!
 //! API (see docs/engine.md): `open`, `search`, `getCards`, `getByScryfallId`, `registerSet`, `applyPatch`,
 //! `applyIndexDelta`, `info`. `Engine::call` is the JSON dispatcher the C ABI (`ffi`) and the Expo module use.
-//! Phase 1: the dataset is decoded into memory (owned); the index is loaded from the `.coqs` when its
-//! dataset hash matches, otherwise rebuilt (and the `.coqs` rewritten).
+//! The dataset is held as a columnar `Store` (no per-record structs); the index is loaded from the `.coqi` when its
+//! dataset hash matches and its columns fit the tables, otherwise rebuilt (and the `.coqi` rewritten).
 
 pub mod ffi;
 pub mod files;
 
 use coqc_format::dialect::Dialect;
-use coqc_format::search::{coqs, SearchIndex};
-use coqc_format::{patch, Dataset};
-use coqc_mtg::read;
+use coqc_format::gindex::{GIndex, IndexParts};
+use coqc_format::schema::Rel;
+use coqc_format::search::{STOP_FRACTION, STOP_MIN};
+use coqc_format::table::Store;
+use coqc_format::{coqd, coqi, patch};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -19,15 +21,18 @@ use std::path::{Path, PathBuf};
 
 pub struct Engine {
     coqd_path: PathBuf,
-    coqs_path: Option<PathBuf>,
-    ds: Dataset,
+    coqi_path: Option<PathBuf>,
+    store: Store,
     dsha: [u8; 32],
     /// None = stale (dataset changed since the index was made); rebuilt on the next search
-    ix: Option<SearchIndex>,
+    parts: Option<IndexParts>,
     by_id: HashMap<Vec<u8>, u32>,
     dialect: Box<dyn Dialect>,
     sets: HashMap<String, Vec<u32>>,
     index_source: &'static str,
+    /// the primary table (the one with a parent) and its parent's name
+    primary: usize,
+    parent: Option<String>,
 }
 
 pub struct Page {
@@ -45,35 +50,42 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-type Loaded = (Dataset, [u8; 32], HashMap<Vec<u8>, u32>);
+type Loaded = (Store, [u8; 32], HashMap<Vec<u8>, u32>);
 
 fn load_dataset(path: &Path, dialect: &dyn Dialect) -> Result<Loaded, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let ds = read(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-    let by_id = dialect.key_map(&ds);
-    Ok((ds, Sha256::digest(&bytes).into(), by_id))
+    let st = coqd::read_store(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    let by_id = dialect.key_map(&st);
+    Ok((st, Sha256::digest(&bytes).into(), by_id))
 }
 
 impl Engine {
-    /// Open a dataset and (optionally) its `.coqs`. A missing, unreadable or mismatching `.coqs` is rebuilt.
-    pub fn open(coqd: &Path, coqs_path: Option<&Path>) -> Result<Engine, String> {
-        Self::open_with(coqd, coqs_path, Box::new(coqc_mtg::Mtg))
+    /// Open a dataset and (optionally) its `.coqi`. A missing, unreadable or mismatching `.coqi` is rebuilt.
+    pub fn open(coqd: &Path, coqi_path: Option<&Path>) -> Result<Engine, String> {
+        Self::open_with(coqd, coqi_path, Box::new(coqc_mtg::Mtg))
     }
 
-    /// Like `open` with an explicit dialect (query syntax, record JSON, key lookup).
-    pub fn open_with(coqd: &Path, coqs_path: Option<&Path>, dialect: Box<dyn Dialect>) -> Result<Engine, String> {
-        let (ds, dsha, by_id) = load_dataset(coqd, dialect.as_ref())?;
+    /// Like `open` with an explicit dialect (query syntax, derived columns, record JSON, key lookup).
+    pub fn open_with(coqd: &Path, coqi_path: Option<&Path>, dialect: Box<dyn Dialect>) -> Result<Engine, String> {
+        let (store, dsha, by_id) = load_dataset(coqd, dialect.as_ref())?;
+        let primary = store.schema.tables.iter().position(|t| matches!(t.rel, Rel::Parent(_))).unwrap_or(0);
+        let parent = match &store.schema.tables[primary].rel {
+            Rel::Parent(p) => Some(p.clone()),
+            _ => None,
+        };
         let mut e = Engine {
             dialect,
-            coqd_path: coqd.to_path_buf(), coqs_path: coqs_path.map(Path::to_path_buf),
-            ds, dsha, ix: None, by_id, sets: HashMap::new(), index_source: "none",
+            coqd_path: coqd.to_path_buf(),
+            coqi_path: coqi_path.map(Path::to_path_buf),
+            store, dsha, parts: None, by_id, sets: HashMap::new(), index_source: "none", primary, parent,
         };
-        if let Some(p) = &e.coqs_path {
+        if let Some(p) = &e.coqi_path {
             if let Ok(b) = std::fs::read(p) {
-                if let Ok((ix, sha)) = coqs::deserialize(&b) {
-                    if sha == e.dsha {
-                        e.ix = Some(ix);
-                        e.index_source = "coqs";
+                if let Ok((parts, sha)) = coqi::deserialize(&b, &e.store.schema) {
+                    // attaching validates every column against the dataset's table sizes
+                    if sha == e.dsha && GIndex::with_parts(&e.store, Some(e.dialect.hooks()), &parts).is_ok() {
+                        e.parts = Some(parts);
+                        e.index_source = "coqi";
                     }
                 }
             }
@@ -83,34 +95,35 @@ impl Engine {
     }
 
     fn ensure_index(&mut self) -> Result<(), String> {
-        if self.ix.is_none() {
-            let ix = SearchIndex::build(&self.ds);
-            if let Some(p) = &self.coqs_path {
+        if self.parts.is_none() {
+            let spec = self.dialect.index_spec(&self.store)?;
+            let parts = GIndex::build_parts(&self.store, spec, STOP_FRACTION, STOP_MIN)?;
+            if let Some(p) = &self.coqi_path {
                 // best effort: a failed write only costs a rebuild next launch
-                let _ = write_atomic(p, &coqs::serialize(&ix, &self.dsha));
+                let _ = write_atomic(p, &coqi::serialize(&parts, &self.store.schema, &self.dsha));
             }
-            self.ix = Some(ix);
+            self.parts = Some(parts);
             self.index_source = "built";
         }
         Ok(())
     }
 
     pub fn search(&mut self, query: &str, limit: Option<usize>, offset: usize, scope: Option<&str>) -> Result<Page, String> {
-        let mut q = self.dialect.parse_query(query)?;
+        let mut q = self.dialect.parse_gquery(query)?;
         q.limit = limit;
         q.offset = offset;
         if let Some(name) = scope {
             q.scope = Some(self.sets.get(name).cloned().ok_or_else(|| format!("unknown set '{name}'"))?);
         }
         self.ensure_index()?;
-        let r = self.ix.as_ref().unwrap().search(&q);
+        let ix = GIndex::with_parts(&self.store, Some(self.dialect.hooks()), self.parts.as_ref().unwrap())?;
+        let r = ix.search(&q)?;
         Ok(Page { total: r.total, rows: r.rows })
     }
 
     pub fn card(&self, row: u32) -> Option<Value> {
-        let p = self.ds.printings.get(row as usize).filter(|p| !p.tombstone)?;
-        self.ds.oracle.get(p.oracle_row as usize)?;
-        Some(self.dialect.record_json(&self.ds, row))
+        let t = &self.store.tables[self.primary];
+        (!*t.tomb.get(row as usize)?).then(|| self.dialect.record_json(&self.store, row))
     }
 
     pub fn row_of(&self, scryfall_id: &str) -> Option<u32> {
@@ -132,33 +145,34 @@ impl Engine {
         let p = std::fs::read(patch_path).map_err(|e| format!("{}: {e}", patch_path.display()))?;
         let new = patch::apply_patch(&old, &p)?;
         write_atomic(&self.coqd_path, &new)?;
-        let (ds, dsha, by_id) = load_dataset(&self.coqd_path, self.dialect.as_ref())?;
-        (self.ds, self.dsha, self.by_id) = (ds, dsha, by_id);
-        self.ix = None; // stale until an index delta is applied or the next search rebuilds
+        let (store, dsha, by_id) = load_dataset(&self.coqd_path, self.dialect.as_ref())?;
+        (self.store, self.dsha, self.by_id) = (store, dsha, by_id);
+        self.parts = None; // stale until an index delta is applied or the next search rebuilds
         self.index_source = "stale";
         Ok(())
     }
 
-    /// Apply a `.coqs` delta (after `apply_patch`). On any failure the index stays stale and is rebuilt on demand.
+    /// Apply a `.coqi` delta (after `apply_patch`). On any failure the index stays stale and is rebuilt on demand.
     pub fn apply_index_delta(&mut self, delta_path: &Path) -> Result<(), String> {
-        let p = self.coqs_path.clone().ok_or("no .coqs path configured")?;
+        let p = self.coqi_path.clone().ok_or("no .coqi path configured")?;
         let old = std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?;
         let d = std::fs::read(delta_path).map_err(|e| format!("{}: {e}", delta_path.display()))?;
-        let new = coqs::apply_delta(&old, &d).map_err(|e| e.to_string())?;
-        let (ix, sha) = coqs::deserialize(&new).map_err(|e| e.to_string())?;
+        let new = coqi::apply_delta(&old, &d).map_err(|e| e.to_string())?;
+        let (parts, sha) = coqi::deserialize(&new, &self.store.schema).map_err(|e| e.to_string())?;
         if sha != self.dsha {
             return Err("index delta targets a different dataset (apply the dataset patch first)".into());
         }
+        GIndex::with_parts(&self.store, Some(self.dialect.hooks()), &parts)?;
         write_atomic(&p, &new)?;
-        self.ix = Some(ix);
+        self.parts = Some(parts);
         self.index_source = "delta";
         Ok(())
     }
 
     pub fn info(&self) -> Value {
         json!({
-            "printings": self.ds.printings.iter().filter(|p| !p.tombstone).count(),
-            "oracleCards": self.ds.oracle.iter().filter(|o| !o.tombstone).count(),
+            "printings": self.store.tables[self.primary].tomb.iter().filter(|t| !**t).count(),
+            "oracleCards": self.parent.as_deref().and_then(|p| self.store.table(p)).map_or(0, |(_, t)| t.tomb.iter().filter(|t| !**t).count()),
             "datasetSha256": hex(&self.dsha),
             "index": self.index_source,
             "sets": self.sets.iter().map(|(k, v)| (k.clone(), json!(v.len()))).collect::<serde_json::Map<_, _>>(),

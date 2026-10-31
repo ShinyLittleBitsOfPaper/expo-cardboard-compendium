@@ -6,7 +6,7 @@
 # 1. restore the current release from `data-latest` (row stability via --prev, patch base); none => first release
 # 2. scripts/daily.sh + scripts/daily-prices.sh (compile, patch, index, price delta; each verifies its own replay)
 # 3. `coqc verify` of the new cards file against the raw bulk file (0 mismatches required)
-# 4. compress the index (.coqs.zst) and write manifest.json
+# 4. compress the index (.coqi.zst) and write manifest.json
 # Result: <stage>/ holds manifest.json, assets.txt, the full files and this run's patches; or <stage>/NOTHING when
 # neither Scryfall nor MTGJSON has new data (idempotent: the workflow then ends cleanly).
 # Env: GITHUB_REPOSITORY (OWNER/REPO, required), COQC_USER_AGENT, RETAIN_DAYS (30), REBASE=1 (force a new chain),
@@ -34,7 +34,7 @@ if curl -fsSL --retry 3 -o "$PREVM" "$MURL"; then
   [ -f "$CF" ] || fetch "$(jq -r .cards.file.url "$PREVM")" "$CF" "$(jq -r .cards.file.sha256 "$PREVM")"
   PRF="data/prices/releases/$(jq -r .prices.file.name "$PREVM")"
   [ -f "$PRF" ] || fetch "$(jq -r .prices.file.url "$PREVM")" "$PRF" "$(jq -r .prices.file.sha256 "$PREVM")"
-  IDX="${CF%.coqd}.coqs"
+  IDX="${CF%.coqd}.coqi"
   if [ ! -f "$IDX" ]; then
     fetch "$(jq -r .cards.index.url "$PREVM")" "$IDX.zst" "$(jq -r .cards.index.sha256 "$PREVM")"
     "$BIN" unzst "$IDX.zst" -o "$IDX" >/dev/null; rm -f "$IDX.zst"
@@ -58,11 +58,11 @@ echo "== verifying $CARDS against the raw bulk file"
 
 echo "== staging"
 cp "$CARDS" "$STAGE/"; cp "$PRICES" "$STAGE/"
-"$BIN" zst "${CARDS%.coqd}.coqs" -o "$STAGE/cards-$CS.coqs.zst" --level 19
+"$BIN" zst "${CARDS%.coqd}.coqi" -o "$STAGE/cards-$CS.coqi.zst" --level 19
 ARGS=()
 if [ -n "$PSTAMP" ] && [ "$CS" != "$PSTAMP" ]; then
-  cp "data/daily/patches/$PSTAMP-to-$CS.coqp" "data/daily/patches/$PSTAMP-to-$CS.coqsd" "$STAGE/"
-  ARGS+=(--cards-patch "$STAGE/cards-$PSTAMP-to-$CS.coqp" --index-delta "$STAGE/cards-$PSTAMP-to-$CS.coqsd")
+  cp "data/daily/patches/$PSTAMP-to-$CS.coqp" "data/daily/patches/$PSTAMP-to-$CS.coqid" "$STAGE/"
+  ARGS+=(--cards-patch "$STAGE/cards-$PSTAMP-to-$CS.coqp" --index-delta "$STAGE/cards-$PSTAMP-to-$CS.coqid")
 fi
 if [ -n "$PPRICE" ] && [ "$PS" != "$PPRICE" ]; then
   cp "data/prices/patches/$PPRICE-to-$PS.coqx" "$STAGE/"
@@ -70,6 +70,6 @@ if [ -n "$PPRICE" ] && [ "$PS" != "$PPRICE" ]; then
 fi
 [ -f "$PREVM" ] && ARGS+=(--prev "$PREVM")
 [ "${REBASE:-0}" = 1 ] && ARGS+=(--rebase)
-"$BIN" manifest --cards "$STAGE/cards-$CS.coqd" --index "$STAGE/cards-$CS.coqs.zst" --prices "$STAGE/prices-$PS.coqr" \
+"$BIN" manifest --cards "$STAGE/cards-$CS.coqd" --index "$STAGE/cards-$CS.coqi.zst" --prices "$STAGE/prices-$PS.coqr" \
   --repo "$REPO" --run "data-$(date -u +%Y%m%d%H%M)" --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --keep-since "$(date -u -d "$RETAIN_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)" "${ARGS[@]}" -o "$STAGE/manifest.json" | tee "$STAGE/assets.txt"
