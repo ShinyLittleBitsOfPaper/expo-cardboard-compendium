@@ -61,11 +61,12 @@ cp "$CARDS" "$STAGE/"; cp "$PRICES" "$STAGE/"
 "$BIN" zst "${CARDS%.coqd}.coqi" -o "$STAGE/cards-$CS.coqi.zst" --level 19
 ARGS=()
 if [ -n "$PSTAMP" ] && [ "$CS" != "$PSTAMP" ]; then
-  cp "data/daily/patches/$PSTAMP-to-$CS.coqp" "data/daily/patches/$PSTAMP-to-$CS.coqid" "$STAGE/"
+  cp "data/daily/patches/$PSTAMP-to-$CS.coqp" "$STAGE/cards-$PSTAMP-to-$CS.coqp"
+  cp "data/daily/patches/$PSTAMP-to-$CS.coqid" "$STAGE/cards-$PSTAMP-to-$CS.coqid"
   ARGS+=(--cards-patch "$STAGE/cards-$PSTAMP-to-$CS.coqp" --index-delta "$STAGE/cards-$PSTAMP-to-$CS.coqid")
 fi
 if [ -n "$PPRICE" ] && [ "$PS" != "$PPRICE" ]; then
-  cp "data/prices/patches/$PPRICE-to-$PS.coqx" "$STAGE/"
+  cp "data/prices/patches/$PPRICE-to-$PS.coqx" "$STAGE/prices-$PPRICE-to-$PS.coqx"
   ARGS+=(--prices-patch "$STAGE/prices-$PPRICE-to-$PS.coqx")
 fi
 [ -f "$PREVM" ] && ARGS+=(--prev "$PREVM")
