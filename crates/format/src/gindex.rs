@@ -32,6 +32,11 @@ pub struct DerivedCol {
 pub trait Hooks: Send + Sync {
     /// Evaluate a `Custom` predicate to a bitset over primary rows.
     fn custom(&self, ix: &GIndex, name: &str, args: &[String]) -> Result<Bits, String>;
+    /// Derived columns (`"table.column"`) this dialect's predicates need. Attaching index parts that lack one fails, so a `.coqi` built
+    /// by an older dialect version is rebuilt instead of failing at query time.
+    fn required(&self) -> &[&str] {
+        &[]
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -59,6 +64,8 @@ pub enum GExpr {
     /// substring of a text column (needle already folded by the caller)
     Text { field: String, needle: String },
     Custom { name: String, args: Vec<String> },
+    /// regular expression (case-insensitive, `^`/`$` per line) over a text column's folded text; the pattern is used as given
+    Regex { field: String, pattern: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -323,6 +330,14 @@ impl<'a> GIndex<'a> {
             Parts::Owned(p) => p,
             Parts::Borrowed(p) => p,
         };
+        if let Some(h) = hooks {
+            for req in h.required() {
+                let has = pr.dcols.iter().any(|d| format!("{}.{}", store.schema.tables[d.table].name, d.name) == *req);
+                if !has {
+                    return Err(format!("index lacks derived column {req} (built by an older version)"));
+                }
+            }
+        }
         for d in &pr.dcols {
             let n = store.tables[d.table].rows();
             let len = match &d.kind {
@@ -370,6 +385,10 @@ impl<'a> GIndex<'a> {
     }
 
     // ------------------------------------------------------------ helpers (also for dialect hooks) ---
+
+    pub fn store(&self) -> &Store {
+        self.store
+    }
 
     pub fn table_id(&self, name: &str) -> Option<usize> {
         self.store.schema.table(name)
@@ -585,6 +604,30 @@ impl<'a> GIndex<'a> {
                     }
                     Src::Store(_) => match self.acc(&f)? {
                         Acc::Str(g) => self.pred_t(f.table, |r| g(r).is_some_and(|v| crate::search::fold(v).contains(needle.as_str())))?,
+                        _ => return Err(format!("{field} is not a text column")),
+                    },
+                }
+            }
+            GExpr::Regex { field, pattern } => {
+                // a plain ASCII word or phrase is a substring search (trigram index)
+                if !pattern.is_empty() && pattern.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') {
+                    return self.eval(&GExpr::Text { field: field.clone(), needle: crate::search::fold(pattern) });
+                }
+                let re = regex::RegexBuilder::new(pattern)
+                    .case_insensitive(true)
+                    .multi_line(true)
+                    .size_limit(1 << 20)
+                    .dfa_size_limit(8 << 20)
+                    .build()
+                    .map_err(|e| format!("bad regex: {e}"))?;
+                let f = self.resolve(field)?;
+                match f.src {
+                    Src::Derived(_) => {
+                        let a = self.text_arena(field)?;
+                        self.pred_t(f.table, |r| re.is_match(a.get(r)))?
+                    }
+                    Src::Store(_) => match self.acc(&f)? {
+                        Acc::Str(g) => self.pred_t(f.table, |r| g(r).is_some_and(|v| re.is_match(&crate::search::fold(v))))?,
                         _ => return Err(format!("{field} is not a text column")),
                     },
                 }

@@ -55,6 +55,49 @@ pub enum Expr {
     Set(String),
     /// collector number, exact
     Cn(String),
+    /// `name:/re/`, `o:/re/`, `fo:/re/`, `t:/re/`; `field` is `name`, `oracle`, `fulloracle` or `type`. Case-insensitive, matched on the
+    /// folded text.
+    Regex { field: String, pattern: String },
+    /// `pow`/`tou`/`loy` (`stat`) compared with a number or another stat/`mv` (`pow>tou`); any face may match
+    Stat { stat: String, op: Op, rhs: StatRhs },
+    /// `m:` mana cost; `cost` is canonical lowercase symbols (`{2}{r}{r}`), compared as a multiset; any face may match
+    Mana { op: Op, cost: String },
+    /// `f:`/`legal:` (`mode` = `legal`, legal or restricted), `banned:`, `restricted:` in `format` (lowercase)
+    Legal { mode: String, format: String },
+    /// `kw:`: the card has this keyword (exact, case-insensitive)
+    Keyword(String),
+    /// `a:`: printing artist contains
+    Artist(String),
+    /// `ft:`: printing flavor text contains
+    Flavor(String),
+    /// `is:` flag, canonical name from [`IS_O`] or [`IS_P`]
+    Is(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatRhs {
+    Num(f64),
+    /// `pow`, `tou`, `loy` or `mv`
+    Stat(String),
+}
+
+/// `is:` flags stored as bits of the derived oracle mask `is_o` (bit = position).
+pub const IS_O: &[&str] = &["permanent", "spell", "historic", "vanilla", "commander", "gold", "hybrid", "phyrexian", "reserved"];
+/// `is:` flags stored as bits of the derived printing mask `is_p`.
+pub const IS_P: &[&str] = &[
+    "foil", "nonfoil", "etched", "promo", "reprint", "digital", "fullart", "textless", "oversized", "variation", "spotlight", "funny", "split",
+    "flip", "transform", "meld", "leveler", "saga", "adventure", "mdfc", "dfc", "token", "planar", "scheme", "vanguard", "augment", "host",
+];
+
+/// Canonical `is:` name (aliases resolved), or None when unsupported.
+pub fn is_name(v: &str) -> Option<&'static str> {
+    let v = match v.to_ascii_lowercase().as_str() {
+        "full" => "fullart",
+        "modal_dfc" => "mdfc",
+        x => return IS_O.iter().chain(IS_P.iter()).find(|n| **n == x).copied(),
+    };
+    IS_O.iter().chain(IS_P.iter()).find(|n| **n == v).copied()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

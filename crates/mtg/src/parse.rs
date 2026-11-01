@@ -145,6 +145,26 @@ impl P {
             Ok(self.word())
         }
     }
+    /// A value that may be a `/regex/` (spaces allowed inside; `\\/` is a literal slash). Returns (text, is_regex).
+    fn value_re(&mut self) -> R<(String, bool)> {
+        if self.peek() != Some('/') {
+            return Ok((self.value()?, false));
+        }
+        self.i += 1;
+        let mut s = String::new();
+        while let Some(c) = self.peek() {
+            self.i += 1;
+            match c {
+                '/' => return Ok((s, true)),
+                '\\' if self.peek() == Some('/') => {
+                    s.push('/');
+                    self.i += 1;
+                }
+                c => s.push(c),
+            }
+        }
+        err("unterminated regex")
+    }
     fn unary(&mut self) -> R<Option<Expr>> {
         match self.peek() {
             Some('-') if self.c.get(self.i + 1).is_some_and(|c| !c.is_whitespace()) => {
@@ -179,8 +199,8 @@ impl P {
                 }
                 if !key.is_empty() {
                     if let Some(op) = self.op() {
-                        let v = self.value()?;
-                        return self.term(&key.to_ascii_lowercase(), op, &v);
+                        let (v, re) = self.value_re()?;
+                        return self.term(&key.to_ascii_lowercase(), op, &v, re);
                     }
                 }
                 self.i = start;
@@ -198,9 +218,45 @@ impl P {
         }
         None
     }
-    fn term(&mut self, key: &str, op: Op, v: &str) -> R<Option<Expr>> {
+    fn term(&mut self, key: &str, op: Op, v: &str, re: bool) -> R<Option<Expr>> {
         let text_op = |op: Op| if matches!(op, Op::Colon | Op::Eq) { Ok(()) } else { err(format!("`{key}` only supports : and =")) };
+        if re {
+            let field = match key {
+                "name" => "name",
+                "t" | "type" => "type",
+                "o" | "oracle" => "oracle",
+                "fo" | "fulloracle" => "fulloracle",
+                _ => return err(format!("`{key}` does not support regular expressions")),
+            };
+            text_op(op)?;
+            return Ok(Some(Expr::Regex { field: field.into(), pattern: v.into() }));
+        }
         Ok(Some(match key {
+            "pow" | "power" | "tou" | "toughness" | "loy" | "loyalty" => {
+                let stat = match &key[..3] { "pow" => "pow", "tou" => "tou", _ => "loy" };
+                let l = v.to_ascii_lowercase();
+                let rhs = match l.as_str() {
+                    "pow" | "power" => StatRhs::Stat("pow".into()),
+                    "tou" | "toughness" => StatRhs::Stat("tou".into()),
+                    "loy" | "loyalty" => StatRhs::Stat("loy".into()),
+                    "mv" | "cmc" | "manavalue" => StatRhs::Stat("mv".into()),
+                    _ => StatRhs::Num(v.parse().map_err(|_| ParseError(format!("bad number: {v}")))?),
+                };
+                Expr::Stat { stat: stat.into(), op, rhs }
+            }
+            "m" | "mana" => Expr::Mana { op, cost: norm_mana(v)? },
+            "f" | "format" | "legal" => { text_op(op)?; Expr::Legal { mode: "legal".into(), format: format_name(v) } }
+            "banned" => { text_op(op)?; Expr::Legal { mode: "banned".into(), format: format_name(v) } }
+            "restricted" => { text_op(op)?; Expr::Legal { mode: "restricted".into(), format: format_name(v) } }
+            "kw" | "keyword" => { text_op(op)?; Expr::Keyword(v.to_ascii_lowercase()) }
+            "a" | "artist" => { text_op(op)?; Expr::Artist(v.into()) }
+            "ft" | "flavor" => { text_op(op)?; Expr::Flavor(v.into()) }
+            "is" | "not" => {
+                text_op(op)?;
+                let Some(n) = is_name(v) else { return err(format!("unsupported {key}: value: {v}")) };
+                let e = Expr::Is(n.into());
+                if key == "not" { Expr::Not(Box::new(e)) } else { e }
+            }
             "name" => { text_op(op)?; Expr::Name(v.into()) }
             "t" | "type" => { text_op(op)?; Expr::Type(v.into()) }
             "o" | "oracle" => { text_op(op)?; Expr::Oracle(v.into()) }
@@ -233,7 +289,7 @@ impl P {
                 self.order = Some(match v.to_ascii_lowercase().as_str() {
                     "name" => SortField::Name,
                     "released" => SortField::Released,
-                    "cmc" => SortField::Mv,
+                    "cmc" | "mv" | "manavalue" => SortField::Mv,
                     "rarity" => SortField::Rarity,
                     x => return err(format!("unsupported order: {x}")),
                 });
@@ -281,6 +337,48 @@ fn names_type_or_set(e: &Expr) -> bool {
         Expr::Not(x) => names_type_or_set(x),
         _ => false,
     }
+}
+
+/// Format key as Scryfall names it (`edh` = commander).
+fn format_name(v: &str) -> String {
+    match v.to_ascii_lowercase().as_str() {
+        "edh" => "commander".into(),
+        x => x.into(),
+    }
+}
+
+/// Canonical mana cost: `2RR` -> `{2}{r}{r}`, `{R/G}` stays `{r/g}`. Digit runs are one generic symbol.
+fn norm_mana(v: &str) -> R<String> {
+    let mut out = String::new();
+    let cs: Vec<char> = v.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        match cs[i] {
+            '{' => {
+                let Some(j) = cs[i..].iter().position(|c| *c == '}') else { return err(format!("bad mana cost: {v}")) };
+                let sym: String = cs[i + 1..i + j].iter().collect::<String>().to_ascii_lowercase();
+                if sym.is_empty() || !sym.chars().all(|c| c.is_ascii_alphanumeric() || c == '/') {
+                    return err(format!("bad mana cost: {v}"));
+                }
+                out.push_str(&format!("{{{sym}}}"));
+                i += j + 1;
+            }
+            c if c.is_ascii_digit() => {
+                let n: String = cs[i..].iter().take_while(|c| c.is_ascii_digit()).collect();
+                i += n.len();
+                out.push_str(&format!("{{{n}}}"));
+            }
+            c if c.is_ascii_alphabetic() => {
+                out.push_str(&format!("{{{}}}", c.to_ascii_lowercase()));
+                i += 1;
+            }
+            _ => return err(format!("bad mana cost: {v}")),
+        }
+    }
+    if out.is_empty() {
+        return err("empty mana cost");
+    }
+    Ok(out)
 }
 
 fn color(op: Op, v: &str, identity: bool) -> R<Expr> {
@@ -352,7 +450,7 @@ mod tests {
         assert!(!parse("bolt").unwrap().include_extras);
         assert!(parse("bolt include:extras").unwrap().include_extras);
         assert!(parse("t:scheme").unwrap().include_extras && parse("s:mh2").unwrap().include_extras);
-        assert!(parse("is:foil").is_err());
+        assert!(parse("is:nonsense").is_err());
         assert!(parse("(a").is_err());
         assert!(parse("a)").is_err());
         assert!(parse("c:xyz").is_err());

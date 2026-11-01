@@ -4,8 +4,11 @@ use coqc_format::gindex::*;
 use crate::query::*;
 use coqc_format::table::{ColData, Store};
 use crate::types::OracleRecord;
-use coqc_format::search::{fold, Bits, Op};
+use coqc_format::search::{fold, num_cmp, Bits, Op};
 use crate::tables;
+use crate::types::decode_nibbles;
+use coqc_format::codec::Reader;
+use std::collections::HashMap;
 
 pub const TEXT_GROUP: &str = "text";
 
@@ -26,6 +29,130 @@ struct Acc {
     rank: Vec<Option<f64>>,
     rar_s: Vec<String>,
     cn_num: Vec<Option<f64>>,
+    mana_f: Vec<String>,
+    pt_f: Vec<String>,
+    is_o: Vec<u32>,
+    is_p: Vec<u32>,
+}
+
+fn bit_o(name: &str) -> u32 {
+    IS_O.iter().position(|n| *n == name).map_or(0, |i| 1 << i)
+}
+fn bit_p(name: &str) -> u32 {
+    IS_P.iter().position(|n| *n == name).map_or(0, |i| 1 << i)
+}
+
+/// `power/toughness/loyalty` of one face or card (raw strings, empty when absent).
+fn pt_triplet(extra: Option<&str>) -> String {
+    let v = extra.and_then(|x| serde_json::from_str::<serde_json::Value>(x).ok());
+    let g = |k: &str| {
+        v.as_ref()
+            .and_then(|v| v.get(k))
+            .and_then(|x| x.as_str().map(String::from).or_else(|| x.as_f64().map(|n| n.to_string())))
+            .unwrap_or_default()
+    };
+    format!("{}/{}/{}", g("power"), g("toughness"), g("loyalty"))
+}
+
+/// Per-face stats joined by ` // ` (a card without faces has one entry).
+fn pt_of(o: &OracleRecord) -> String {
+    let top = pt_triplet(o.extra.as_deref());
+    match &o.faces {
+        Some(fs) if !fs.is_empty() => {
+            let v: Vec<String> = fs.iter().map(|f| pt_triplet(f.extra.as_deref())).collect();
+            if v.iter().all(|x| x == "//") && top != "//" { top } else { v.join(" // ") }
+        }
+        _ => top,
+    }
+}
+
+/// Lowercase mana cost(s), faces joined by ` // `.
+fn mana_of(o: &OracleRecord) -> String {
+    match &o.faces {
+        Some(fs) if !fs.is_empty() => fs.iter().map(|f| f.mana_cost.clone().unwrap_or_default()).collect::<Vec<_>>().join(" // "),
+        _ => o.mana_cost.clone().unwrap_or_default(),
+    }
+    .to_ascii_lowercase()
+}
+
+/// `{2}{r}{r}` -> sorted symbols.
+fn symbols(s: &str) -> Vec<String> {
+    let (mut v, mut rest) = (Vec::new(), s);
+    while let Some(a) = rest.find('{') {
+        let Some(b) = rest[a..].find('}') else { break };
+        v.push(rest[a..a + b + 1].to_string());
+        rest = &rest[a + b + 1..];
+    }
+    v.sort();
+    v
+}
+
+fn counts(v: &[String]) -> HashMap<&str, usize> {
+    let mut m = HashMap::new();
+    for x in v {
+        *m.entry(x.as_str()).or_insert(0) += 1;
+    }
+    m
+}
+
+/// Multiset comparison of a card's cost with the query's (`:`/`>=` card contains query, `<=` the reverse, `=` equal).
+fn mana_cmp(card: &[String], q: &[String], op: Op) -> bool {
+    let (cc, qc) = (counts(card), counts(q));
+    let sup = qc.iter().all(|(k, n)| cc.get(k).copied().unwrap_or(0) >= *n);
+    let sub = cc.iter().all(|(k, n)| qc.get(k).copied().unwrap_or(0) >= *n);
+    let eq = sup && sub;
+    match op {
+        Op::Colon | Op::Ge => sup,
+        Op::Gt => sup && !eq,
+        Op::Eq => eq,
+        Op::Le => sub,
+        Op::Lt => sub && !eq,
+        Op::Ne => !eq,
+    }
+}
+
+/// Numeric value of a power/toughness/loyalty string (`*` = 0, `1+*` = 1, as Scryfall).
+fn stat_num(s: &str) -> Option<f64> {
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(n) = s.parse::<f64>() {
+        return Some(n);
+    }
+    let d: String = s.chars().take_while(|c| c.is_ascii_digit() || *c == '-').collect();
+    d.parse().ok().or_else(|| s.contains('*').then_some(0.0))
+}
+
+fn stat_idx(s: &str) -> Option<usize> {
+    match s {
+        "pow" => Some(0),
+        "tou" => Some(1),
+        "loy" => Some(2),
+        _ => None,
+    }
+}
+
+pub fn op_sym(op: Op) -> &'static str {
+    match op {
+        Op::Colon => ":",
+        Op::Eq => "=",
+        Op::Ne => "!=",
+        Op::Lt => "<",
+        Op::Le => "<=",
+        Op::Gt => ">",
+        Op::Ge => ">=",
+    }
+}
+
+fn parse_op(s: &str) -> Result<Op, String> {
+    [Op::Colon, Op::Eq, Op::Ne, Op::Lt, Op::Le, Op::Gt, Op::Ge].into_iter().find(|o| op_sym(*o) == s).ok_or_else(|| format!("bad operator {s}"))
+}
+
+fn has_keyword(extra: &str, kw: &str) -> bool {
+    let Some(a) = extra.find("\"keywords\":[") else { return false };
+    let rest = &extra[a + 12..];
+    let Some(b) = rest.find(']') else { return false };
+    rest[..b].split(',').any(|k| k.trim().trim_matches('"').eq_ignore_ascii_case(kw))
 }
 
 impl Acc {
@@ -34,17 +161,84 @@ impl Acc {
         self.name_plain.push(fold(&name));
         self.name_n.push(fold_name(&name));
         self.name_sort.push(fold(&name).chars().filter(|c| c.is_alphanumeric()).collect::<String>());
-        self.type_f.push(fold(&join_faces(&o.type_line, &o.faces, |f| &f.type_line)));
+        let type_f = fold(&join_faces(&o.type_line, &o.faces, |f| &f.type_line));
         let f = join_faces(&o.oracle_text, &o.faces, |f| &f.oracle_text);
-        self.text.push(fold(&strip_reminder(&f)));
-        self.full.push(fold(&f));
-        self.colors.push(oracle_mask(o, o.colors, "colors", true) as u32);
+        let full = fold(&f);
+        let colors = oracle_mask(o, o.colors, "colors", true) as u32;
+        self.colors.push(colors);
         self.identity.push(oracle_mask(o, o.color_identity, "color_identity", false) as u32);
+        let mana = mana_of(o);
+        let has = |w: &str| type_f.contains(w);
+        let mut b = 0u32;
+        if ["artifact", "creature", "enchantment", "land", "planeswalker", "battle"].iter().any(|w| has(w)) {
+            b |= bit_o("permanent");
+        }
+        if !has("land") {
+            b |= bit_o("spell");
+        }
+        if has("legendary") || has("artifact") || has("saga") {
+            b |= bit_o("historic");
+        }
+        if has("creature") && full.trim().is_empty() {
+            b |= bit_o("vanilla");
+        }
+        if (has("legendary") && has("creature")) || full.contains("can be your commander") {
+            b |= bit_o("commander");
+        }
+        if colors.count_ones() >= 2 {
+            b |= bit_o("gold");
+        }
+        let syms = symbols(&mana);
+        if syms.iter().any(|x| x.contains('/') && !x.ends_with("/p}")) {
+            b |= bit_o("hybrid");
+        }
+        if syms.iter().any(|x| x.ends_with("/p}")) {
+            b |= bit_o("phyrexian");
+        }
+        if o.extra.as_deref().is_some_and(|x| x.contains("\"reserved\":true")) {
+            b |= bit_o("reserved");
+        }
+        self.is_o.push(b);
+        self.mana_f.push(mana);
+        self.pt_f.push(pt_of(o));
+        self.type_f.push(type_f);
+        self.text.push(fold(&strip_reminder(&f)));
+        self.full.push(full);
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn printing(&mut self, layout: Option<&str>, extra: Option<&str>, playtest: bool, set: Option<&str>, cn: Option<&str>, rarity: Option<&str>) {
+    fn printing(&mut self, layout: Option<&str>, extra: Option<&str>, playtest: bool, set: Option<&str>, cn: Option<&str>, rarity: Option<&str>, flags: (Option<i64>, Option<bool>, Option<bool>, Option<bool>)) {
         let set_type = extra.and_then(json_str_field_set_type);
+        let mut p = 0u32;
+        let fin = flags.0.unwrap_or(0);
+        for (m, n) in [(2, "foil"), (1, "nonfoil"), (4, "etched")] {
+            if fin & m != 0 {
+                p |= bit_p(n);
+            }
+        }
+        for (v, n) in [(flags.1, "promo"), (flags.2, "reprint"), (flags.3, "digital")] {
+            if v == Some(true) {
+                p |= bit_p(n);
+            }
+        }
+        for (k, n) in [("full_art", "fullart"), ("textless", "textless"), ("oversized", "oversized"), ("variation", "variation"), ("story_spotlight", "spotlight")] {
+            if extra.is_some_and(|x| x.contains(&format!("\"{k}\":true"))) {
+                p |= bit_p(n);
+            }
+        }
+        if set_type == Some("funny") {
+            p |= bit_p("funny");
+        }
+        match layout {
+            Some(l @ ("split" | "flip" | "transform" | "meld" | "leveler" | "saga" | "adventure" | "planar" | "scheme" | "vanguard" | "augment" | "host")) => p |= bit_p(l),
+            Some("modal_dfc") => p |= bit_p("mdfc"),
+            Some("token" | "double_faced_token" | "emblem") => p |= bit_p("token"),
+            _ => {}
+        }
+        if matches!(layout, Some("transform" | "modal_dfc" | "meld" | "double_faced_token" | "reversible_card")) {
+            p |= bit_p("dfc");
+        }
+        self.is_p.push(p);
         self.hidden.push(matches!(layout, Some("vanguard" | "planar" | "scheme" | "phenomenon" | "art_series")) || matches!(set_type, Some("memorabilia")) || playtest);
         self.set_f.push(set.map(fold).unwrap_or_default());
         let cn = cn.map(fold).unwrap_or_default();
@@ -66,6 +260,10 @@ impl Acc {
             t("oracle", "full_text", self.full, Some(TEXT_GROUP)),
             DerivedCol { table: "oracle".into(), name: "colors_m".into(), data: DData::Mask(self.colors), tri_group: None },
             DerivedCol { table: "oracle".into(), name: "identity_m".into(), data: DData::Mask(self.identity), tri_group: None },
+            t("oracle", "mana_f", self.mana_f, None),
+            t("oracle", "pt_f", self.pt_f, None),
+            DerivedCol { table: "oracle".into(), name: "is_o".into(), data: DData::Mask(self.is_o), tri_group: None },
+            DerivedCol { table: "printing".into(), name: "is_p".into(), data: DData::Mask(self.is_p), tri_group: None },
             t("printing", "set_f", self.set_f, None),
             t("printing", "cn_f", self.cn_f, None),
             t("printing", "rarity_s", self.rar_s, None),
@@ -98,11 +296,14 @@ pub fn derive_store(st: &Store) -> Result<Vec<DerivedCol>, String> {
     else {
         return Err(bad());
     };
+    let (ColData::Int(fin_c), ColData::Bool(promo_c), ColData::Bool(reprint_c), ColData::Bool(digital_c)) = (col(13), col(10), col(11), col(12)) else {
+        return Err(bad());
+    };
     for i in 0..st.tables[2].rows() {
         let layout = layout_c[i].and_then(|l| layouts.get(l as usize)).map(|x| x.as_str());
         let playtest = ptypes_c[i].as_ref().is_some_and(|v| v.iter().any(|&t| promo_types.get(t as usize).is_some_and(|n| n == "playtest")));
         let rar = rar_c[i].and_then(|id| rarities.get(id as usize)).map(|s| s.as_str());
-        a.printing(layout, extra_c[i].as_deref(), playtest, set_c[i].as_deref(), cn_c[i].as_deref(), rar);
+        a.printing(layout, extra_c[i].as_deref(), playtest, set_c[i].as_deref(), cn_c[i].as_deref(), rar, (fin_c[i], promo_c[i], reprint_c[i], digital_c[i]));
     }
     Ok(a.finish())
 }
@@ -115,6 +316,9 @@ pub fn index_spec(st: &Store) -> Result<IndexSpec, String> {
 pub struct MtgHooks;
 
 impl Hooks for MtgHooks {
+    fn required(&self) -> &[&str] {
+        &["oracle.mana_f", "oracle.pt_f", "oracle.is_o", "printing.is_p"]
+    }
     fn custom(&self, ix: &GIndex, name: &str, args: &[String]) -> Result<Bits, String> {
         match name {
             // args: [field ("text" | "full_text"), folded needle containing `~`]
@@ -155,6 +359,70 @@ impl Hooks for MtgHooks {
                     let n = names.get(i);
                     n == q || n.split(" // ").any(|f| f == q)
                 })
+            }
+            // args: [stat (pow|tou|loy), op, rhs kind (num|stat), rhs]
+            "stat" => {
+                let li = stat_idx(&args[0]).ok_or("bad stat")?;
+                let op = parse_op(&args[1])?;
+                let pt = ix.text_arena("pt_f")?;
+                let mv = ix.num_at("cmc")?;
+                let num: Option<f64> = if args[2] == "num" { Some(args[3].parse().map_err(|_| "bad number".to_string())?) } else { None };
+                let ri = stat_idx(&args[3]);
+                let rhs_mv = args[2] == "stat" && args[3] == "mv";
+                ix.pred("oracle", |i| {
+                    pt.get(i).split(" // ").any(|face| {
+                        let parts: Vec<&str> = face.split('/').collect();
+                        let Some(l) = parts.get(li).and_then(|x| stat_num(x)) else { return false };
+                        let r = if let Some(n) = num {
+                            Some(n)
+                        } else if rhs_mv {
+                            mv(i)
+                        } else {
+                            ri.and_then(|k| parts.get(k)).and_then(|x| stat_num(x))
+                        };
+                        r.is_some_and(|r| num_cmp(l, r, op))
+                    })
+                })
+            }
+            // args: [op, canonical cost]
+            "mana" => {
+                let op = parse_op(&args[0])?;
+                let q = symbols(&args[1]);
+                let arena = ix.text_arena("mana_f")?;
+                ix.pred("oracle", |i| arena.get(i).split(" // ").any(|face| mana_cmp(&symbols(face), &q, op)))
+            }
+            // args: [mode (legal|banned|restricted), format]
+            "legal" => {
+                let st = ix.store();
+                let t = ix.table_id("printing").ok_or("no printing table")?;
+                let ci = st.schema.tables[t].columns.iter().position(|c| c.name == "legalities").ok_or("no legalities column")?;
+                let ColData::Bytes(col) = &st.tables[t].cols[ci] else { return Err("legalities column type".into()) };
+                let fid = tables::meta_of(st).formats.id(&args[1]).ok_or_else(|| format!("unknown format: {}", args[1]))? as usize;
+                let mode = args[0].as_str();
+                ix.pred("printing", |i| {
+                    let v = col[i].as_deref().and_then(|b| decode_nibbles(&mut Reader::new(b)).ok().flatten()).and_then(|v| v.get(fid).copied());
+                    match mode {
+                        "banned" => v == Some(4),
+                        "restricted" => v == Some(3),
+                        _ => matches!(v, Some(1 | 3)),
+                    }
+                })
+            }
+            // args: [printing text column, folded needle]
+            "pstr" => {
+                let st = ix.store();
+                let t = ix.table_id("printing").ok_or("no printing table")?;
+                let ci = st.schema.tables[t].columns.iter().position(|c| c.name == args[0]).ok_or_else(|| format!("unknown column {}", args[0]))?;
+                let ColData::Str(col) = &st.tables[t].cols[ci] else { return Err(format!("{} is not a text column", args[0])) };
+                ix.pred("printing", |i| col[i].as_deref().is_some_and(|v| fold(v).contains(args[1].as_str())))
+            }
+            // args: [lowercase keyword]
+            "keyword" => {
+                let st = ix.store();
+                let t = ix.table_id("oracle").ok_or("no oracle table")?;
+                let ci = st.schema.tables[t].columns.iter().position(|c| c.name == "extra").ok_or("no extra column")?;
+                let ColData::Json(col) = &st.tables[t].cols[ci] else { return Err("extra column type".into()) };
+                ix.pred("oracle", |i| col[i].as_deref().is_some_and(|x| has_keyword(x, &args[0])))
             }
             _ => Err(format!("unknown custom predicate {name}")),
         }
@@ -220,6 +488,31 @@ pub fn translate_expr(e: &Expr) -> GExpr {
         }
         Expr::Set(s) => cmp("set_f", Op::Eq, Val::Str(fold(s))),
         Expr::Cn(c) => cmp("cn_f", Op::Eq, Val::Str(fold(c))),
+        Expr::Regex { field, pattern } => {
+            let f = match field.as_str() {
+                "name" => "name_plain",
+                "type" => "type_f",
+                "fulloracle" => "full_text",
+                _ => "text",
+            };
+            GExpr::Regex { field: f.into(), pattern: pattern.clone() }
+        }
+        Expr::Stat { stat, op, rhs } => {
+            let (kind, r) = match rhs {
+                StatRhs::Num(n) => ("num", n.to_string()),
+                StatRhs::Stat(s) => ("stat", s.clone()),
+            };
+            GExpr::Custom { name: "stat".into(), args: vec![stat.clone(), op_sym(*op).into(), kind.into(), r] }
+        }
+        Expr::Mana { op, cost } => GExpr::Custom { name: "mana".into(), args: vec![op_sym(*op).into(), cost.clone()] },
+        Expr::Legal { mode, format } => GExpr::Custom { name: "legal".into(), args: vec![mode.clone(), format.clone()] },
+        Expr::Keyword(k) => GExpr::Custom { name: "keyword".into(), args: vec![k.clone()] },
+        Expr::Artist(a) => GExpr::Custom { name: "pstr".into(), args: vec!["artist".into(), fold(a)] },
+        Expr::Flavor(a) => GExpr::Custom { name: "pstr".into(), args: vec!["flavor_text".into(), fold(a)] },
+        Expr::Is(n) => match IS_O.iter().position(|x| x == n) {
+            Some(i) => cmp("is_o", Op::Ge, Val::Mask(1 << i)),
+            None => cmp("is_p", Op::Ge, Val::Mask(1 << IS_P.iter().position(|x| x == n).unwrap_or(0))),
+        },
     }
 }
 

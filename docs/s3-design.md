@@ -87,3 +87,7 @@ Single-line `-t:land` re-run (expect 37848) and the real-data timing loop again 
 - Ingestion still builds the MTG record structs, so they live in `coqc-mtg` (`types.rs`: `Dataset`, `OracleRecord`, `PrintingRecord`, ...; `query.rs`: the Scryfall query tree). They are the working shape of `compile`/`verify` and the bridge `tables::{to_store, from_store}`; the engine, the index and the CLI search path never build them. Writing `Store` directly from ingestion is possible later but was not needed to finish S3.
 - Oracle: `tests/golden/gindex-oracle.txt` replaces the live old-index comparison. Regenerating it needs the pre-S3c code (0.0.2-21); treat any diff as a behaviour change.
 - Remaining: S3d (regex, `is:`/`f:`/`pow`/`tou`, price predicates), schema `ordered` enum flag, mapped `.coqi` reader.
+
+## S3d status (0.0.2-23, built)
+- `GExpr::Regex` (generic, `regex` crate in `coqc-format`); MTG: regex terms, pow/tou/loy, m:, is:/not:, f:/banned:/restricted:, kw:, a:, ft:, order:mv (see search.md). Derived `mana_f`, `pt_f`, `is_o`, `is_p`; hooks `stat`, `mana`, `legal`, `pstr`, `keyword`; `Hooks::required` stale-index guard.
+- Deferred: price predicates (S4 overlays), `in:`/`has:`/`lang:`, trigram prefilter for non-literal regex, `ordered` enum flag, mapped `.coqi`. S3 is otherwise complete.

@@ -64,8 +64,23 @@ Name matching ignores `'`, `’` and `,` ("krrik son" finds "K'rrik, Son of Yawg
 spans), `fo:` includes it. `~` = the card's own name (full name, a face name, or the part before the first comma) or generic
 "this land"/"this creature"/... (verified: Scryfall's `o:"~ enters tapped"` returns 762 cards); the generic-word list is a fixed
 approximation.
-Parser TODO (S3d): `m:`/`mana:`, `is:`/`has:`/`f:`/`in:`/`b:`/`st:`/`lang:`, price keys, `a:`/`ft:`/`wm:`, `unique:art`, `prefer:`
-others, regex, `keyword:`, `pow/tou/loy`.
+S3d additions (0.0.2-23):
+- **Regex** `name:/re/`, `o:/re/`, `fo:/re/`, `t:/re/` (spaces allowed inside, `\\/` = slash). Rust `regex` crate, case-insensitive, `^`/`$` per line,
+  run on the folded text; size limits (1 MB program, 8 MB DFA) so a hostile pattern errors instead of running. A plain ASCII word/phrase
+  pattern takes the trigram path; everything else scans the (oracle) rows. Unverified vs Scryfall: per-line anchors, `o:` regex ignoring reminder text.
+- `pow`/`tou`/`loy` (+ long names) with a number or another stat (`pow>tou`, `pow>mv`); any face may match; `*` = 0, `1+*` = 1. Derived `pt_f`.
+- `m:`/`mana:` mana cost as a multiset (`:`/`>=` contains, `=` equal, `<=` subset); `2RR` shorthand; any face. Derived `mana_f`.
+- `is:`/`not:` (`-is:`): oracle flags permanent spell historic vanilla commander gold hybrid phyrexian reserved; printing flags foil nonfoil
+  etched promo reprint digital fullart(full) textless oversized variation spotlight funny split flip transform meld leveler saga adventure
+  mdfc dfc token planar scheme vanguard augment host. Derived masks `is_o`/`is_p`. permanent/spell/historic/vanilla/commander/hybrid are
+  approximations; unknown values are errors.
+- `f:`/`format:`/`legal:` (legal **or restricted**, unverified vs Scryfall; `edh` = commander), `banned:`, `restricted:`; unknown format is a search error.
+- `kw:`/`keyword:` (exact, case-insensitive), `a:`/`artist:`, `ft:`/`flavor:` (substring scan of top-level printing fields; face-level artist/flavor not covered;
+  `ft:` is the slowest, ~70 ms on 120k rows desktop), `order:mv`.
+- Index: four new derived columns (+1.15 MB raw, +0.1 MB zstd on synthetic 120k; old queries unchanged). `Hooks::required` makes an index built by an
+  older version fail to attach, so the engine rebuilds it.
+Not done: price predicates (`usd>1`; prices are outside the indexed store, wait for the overlay stage S4), `in:`, `has:`, `lang:`, `b:`/`st:`,
+`wm:`, `unique:art`, `prefer:` beyond oldest/newest, tagger `is:` (fetchland...).
 Default hiding (Scryfall): layout vanguard/planar/scheme/phenomenon/art_series, set_type memorabilia and promo_types `playtest`
 (cmb1/cmb2/unk) are hidden; other funny sets are visible, unless `include:extras` or the query contains a `t:` or `s:`/`e:` term
 (anywhere, approximation). Tokens/emblems not hidden yet (unverified).
