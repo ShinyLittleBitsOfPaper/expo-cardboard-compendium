@@ -2,8 +2,8 @@
 // flow is testable with fakes (src/sync/__tests__). Invariant: a file only ever appears under its final name after its
 // SHA-256 was checked, and every swap is an atomic rename, so an interrupted sync leaves a working (older) dataset.
 
-import { parseManifest, type Asset, type CardPatch, type Manifest, type MinFormat } from './manifest';
-import { planSync, MODULE_FORMAT, type FullReason, type LocalState } from './plan';
+import { parseManifest, resolve, SUPPORTED_MANIFEST_VERSION, type Asset, type Manifest } from './manifest';
+import { planSync, MODULE_FORMAT, type CardStep, type FullReason, type LocalState, type ModuleFormat } from './plan';
 
 export const DEFAULT_MANIFEST_URL =
   'https://github.com/ShinyLittleBitsOfPaper/expo-cardboard-compendium/releases/download/data-latest/manifest.json';
@@ -31,31 +31,38 @@ export interface SyncDeps {
 }
 
 export interface SyncOptions {
-  /** Directory (plain path) that holds cards.coqd, cards.coqi, prices.coqr and state.json. */
+  /** Directory (plain path) that holds cards.coqd, cards.coqi, <overlay>.coqd (prices.coqd) and state.json. */
   dir: string;
   manifestUrl?: string;
   /** Called before each download/apply step. */
   onProgress?: (e: { step: string; index: number; total: number }) => void;
   /** Test hook: override the module's reader formats. */
-  moduleFormat?: MinFormat;
+  moduleFormat?: ModuleFormat;
 }
 
 export interface SyncResult {
   status: 'up_to_date' | 'patched' | 'full' | 'needs_app_update';
   /** Number of dataset patches applied (status 'patched'). */
   patches: number;
-  prices: 'unchanged' | 'updated';
+  /** Overlay datasets (prices, ...) whose files were replaced. */
+  overlays: 'unchanged' | 'updated';
   /** True when files on disk changed: the app should (re)open the engine and re-register its sets. */
   changed: boolean;
   /** Why a full download happened (status 'full'). */
   reason?: FullReason;
   /** Formats this build cannot read yet (status 'needs_app_update'): ask the user to update the app. */
-  required?: Partial<MinFormat> & { manifest?: number };
+  required?: Partial<ModuleFormat> & { manifest?: number };
 }
 
 export const dataPaths = (dir: string) => {
   const d = dir.replace(/\/+$/, '');
-  return { coqd: `${d}/cards.coqd`, coqi: `${d}/cards.coqi`, coqr: `${d}/prices.coqr`, state: `${d}/state.json` };
+  return {
+    coqd: `${d}/cards.coqd`,
+    coqi: `${d}/cards.coqi`,
+    /** File of an overlay dataset (`prices` -> prices.coqd). */
+    overlay: (id: string) => `${d}/${id}.coqd`,
+    state: `${d}/state.json`,
+  };
 };
 
 function parseState(text: string | null): LocalState | null {
@@ -63,7 +70,9 @@ function parseState(text: string | null): LocalState | null {
   try {
     const s = JSON.parse(text);
     if (typeof s.epoch === 'number' && typeof s.cardsStamp === 'string' && typeof s.cardsSha256 === 'string') {
-      return { epoch: s.epoch, cardsStamp: s.cardsStamp, cardsSha256: s.cardsSha256, pricesStamp: typeof s.pricesStamp === 'string' ? s.pricesStamp : null };
+      const overlays: Record<string, string> = {};
+      for (const [k, v] of Object.entries(s.overlays ?? {})) if (typeof v === 'string') overlays[k] = v;
+      return { epoch: s.epoch, cardsStamp: s.cardsStamp, cardsSha256: s.cardsSha256, overlays };
     }
   } catch {
     // fall through: unreadable state means "start over"
@@ -77,11 +86,18 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
   const progress = (step: string, index: number, total: number) => o.onProgress?.({ step, index, total });
 
   await deps.mkdirs(o.dir);
-  const manifest: Manifest = parseManifest(await deps.fetchJson(o.manifestUrl ?? DEFAULT_MANIFEST_URL));
+  const rawManifest = await deps.fetchJson(o.manifestUrl ?? DEFAULT_MANIFEST_URL);
+  // A newer manifest may have another shape: decide "update the app" before validating the fields.
+  const mv = (rawManifest as { manifest_version?: unknown } | null)?.manifest_version;
+  if (typeof mv === 'number' && mv > SUPPORTED_MANIFEST_VERSION) {
+    return { status: 'needs_app_update', patches: 0, overlays: 'unchanged', changed: false, required: { manifest: mv } };
+  }
+  const manifest: Manifest = parseManifest(rawManifest);
+  const { cards, index, overlays } = resolve(manifest);
   let local = parseState(await deps.readText(paths.state));
   const plan = planSync(manifest, local, o.moduleFormat ?? MODULE_FORMAT);
   if (plan.status === 'needs_app_update') {
-    return { status: 'needs_app_update', patches: 0, prices: 'unchanged', changed: false, required: plan.required };
+    return { status: 'needs_app_update', patches: 0, overlays: 'unchanged', changed: false, required: plan.required };
   }
 
   const tmp = (name: string) => `${o.dir.replace(/\/+$/, '')}/${name}`;
@@ -106,12 +122,12 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
   const fullCards = async () => {
     const total = 2;
     progress('cards', 1, total);
-    const d = await fetchVerified(manifest.cards.file, 'cards.coqd.part');
+    const d = await fetchVerified(cards.file, 'cards.coqd.part');
     progress('index', 2, total);
-    const z = await fetchVerified(manifest.cards.index, 'cards.coqi.zst.part');
+    const z = await fetchVerified(index.file, 'cards.coqi.zst.part');
     const raw = await engine.unzstFile(z, tmp('cards.coqi.part'));
     await engine.removeFile(z);
-    if (raw.sha256 !== manifest.cards.index.raw_sha256 || raw.size !== manifest.cards.index.raw_size) {
+    if (raw.sha256 !== index.raw!.sha256 || raw.size !== index.raw!.size) {
       await engine.removeFile(tmp('cards.coqi.part'));
       await engine.removeFile(d);
       throw new Error('cards index: decompressed data failed verification');
@@ -119,10 +135,12 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
     // Swap dataset first, then index: a crash in between leaves a stale index, which the engine rebuilds on open.
     await engine.moveFile(d, paths.coqd);
     await engine.moveFile(tmp('cards.coqi.part'), paths.coqi);
-    await saveState({ epoch: manifest.epoch, cardsStamp: manifest.cards.stamp, cardsSha256: manifest.cards.file.sha256, pricesStamp: local?.pricesStamp ?? null });
+    // Overlays follow the card row ids: on a new epoch the ones on disk no longer match, so forget them.
+    const keep = local && local.epoch === manifest.epoch ? local.overlays : {};
+    await saveState({ epoch: manifest.epoch, cardsStamp: cards.stamp, cardsSha256: cards.file.sha256, overlays: keep });
   };
 
-  const patchCards = async (chain: CardPatch[]) => {
+  const patchCards = async (chain: CardStep[]) => {
     let info: { datasetSha256: string } | null = null;
     try {
       info = await engine.info();
@@ -131,17 +149,17 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
     }
     if (!info || info.datasetSha256 !== local!.cardsSha256) info = await engine.open(paths.coqd, paths.coqi);
     for (const [i, s] of chain.entries()) {
-      progress(`patch ${s.to}`, i + 1, chain.length);
-      const p = await fetchVerified(s.patch, 'step.coqp.part');
+      progress(`patch ${s.patch.to}`, i + 1, chain.length);
+      const p = await fetchVerified(s.patch.patch, 'step.coqp.part');
       try {
         info = await engine.applyPatch(p);
       } finally {
         await engine.removeFile(p);
       }
-      if (s.index_delta) {
+      if (s.indexDelta) {
         // Best effort: if the delta does not apply, the engine rebuilds the index on the next search.
         try {
-          const d = await fetchVerified(s.index_delta, 'step.coqid.part');
+          const d = await fetchVerified(s.indexDelta.patch, 'step.coqid.part');
           try {
             info = await engine.applyIndexDelta(d);
           } finally {
@@ -151,9 +169,9 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
           // keep going
         }
       }
-      await saveState({ ...local!, cardsStamp: s.to, cardsSha256: info.datasetSha256 });
+      await saveState({ ...local!, cardsStamp: s.patch.to, cardsSha256: info.datasetSha256 });
     }
-    if (info.datasetSha256 !== manifest.cards.file.sha256) throw new Error('patched dataset does not match the published file');
+    if (info.datasetSha256 !== cards.file.sha256) throw new Error('patched dataset does not match the published file');
   };
 
   let status: SyncResult['status'] = 'up_to_date';
@@ -176,15 +194,18 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
     }
   }
 
-  let prices: SyncResult['prices'] = 'unchanged';
-  if (plan.prices.kind === 'full') {
-    progress('prices', 1, 1);
-    const p = await fetchVerified(manifest.prices.file, 'prices.coqr.part');
-    await engine.moveFile(p, paths.coqr);
-    await saveState({ ...local!, pricesStamp: manifest.prices.stamp });
-    prices = 'updated';
+  let updated: SyncResult['overlays'] = 'unchanged';
+  for (const d of overlays) {
+    const op = plan.overlays[d.id];
+    if (!op || op.kind === 'up_to_date') continue;
+    // Overlays come as full files until the engine applies .coqp to them (PlanOptions.patchOverlays).
+    progress(d.id, 1, 1);
+    const p = await fetchVerified(d.file, `${d.id}.coqd.part`);
+    await engine.moveFile(p, paths.overlay(d.id));
+    await saveState({ ...local!, overlays: { ...local!.overlays, [d.id]: d.stamp } });
+    updated = 'updated';
   }
 
-  const changed = status !== 'up_to_date' || prices === 'updated';
-  return { status, patches, prices, changed, ...(reason ? { reason } : {}) };
+  const changed = status !== 'up_to_date' || updated === 'updated';
+  return { status, patches, overlays: updated, changed, ...(reason ? { reason } : {}) };
 }

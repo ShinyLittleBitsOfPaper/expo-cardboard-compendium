@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { parseManifest, type Manifest } from '../manifest';
+import { parseManifest, resolve, type Dataset, type Manifest } from '../manifest';
 import { planSync, planBytes, MODULE_FORMAT, type CardsPlan, type LocalState } from '../plan';
 import { runSync, dataPaths, type SyncDeps } from '../run';
 
@@ -25,27 +25,36 @@ function asset(files: Map<string, Buffer>, tag: string, name: string, body: Buff
   return { name, url, size: body.length, sha256: sha(body) };
 }
 /** Release for `day`, with patch links from `chainFrom` days (each carrying an index delta unless noDelta). */
-function release(day: number, o: { chainFrom?: number[]; epoch?: number; pad?: number; noDelta?: boolean; minCoqd?: number; corrupt?: string } = {}): Release {
+function release(day: number, o: { chainFrom?: number[]; epoch?: number; pad?: number; noDelta?: boolean; minCoqd?: number; corrupt?: string; extraOverlay?: boolean } = {}): Release {
   const files = new Map<string, Buffer>();
   const d = dataset(day, o.pad ?? 5000);
   const idxRaw = Buffer.concat([Buffer.from('IDX:'), d]);
-  const patches = (o.chainFrom ?? []).map((from) => {
-    return {
-      from: `S${from}`, to: `S${from + 1}`, at: `2026-10-0${from + 1}T22:00:00Z`,
-      patch: asset(files, `data-r${from + 1}`, `cards-S${from}-to-S${from + 1}.coqp`, Buffer.from(`PATCH:${from + 1}`)),
-      index_delta: o.noDelta ? null : asset(files, `data-r${from + 1}`, `cards-S${from}-to-S${from + 1}.coqid`, Buffer.from(`IDXD:${from + 1}`)),
-    };
+  const link = (id: string, ext: string, from: number, body: string) => ({
+    from: `S${from}`, to: `S${from + 1}`, at: `2026-10-0${from + 1}T22:00:00Z`,
+    patch: asset(files, `data-r${from + 1}`, `${id}-S${from}-to-S${from + 1}.${ext}`, Buffer.from(body)),
   });
-  const manifest: Manifest = {
-    manifest_version: 1, generated_at: `2026-10-0${day}T22:00:00Z`, run: `data-r${day}`, epoch: o.epoch ?? 1, rebase: patches.length === 0,
-    min_client_format: { coqd: o.minCoqd ?? 2, coqi: 1, coqr: 1 },
-    cards: {
-      stamp: `S${day}`, format: 2, min_reader: 2,
-      file: asset(files, 'data-latest', `cards-S${day}.coqd`, d),
-      index: { ...asset(files, 'data-latest', `cards-S${day}.coqi.zst`, Buffer.concat([Buffer.from('ZST!'), idxRaw])), encoding: 'zstd', raw_size: idxRaw.length, raw_sha256: sha(idxRaw) },
-      patches,
+  const chain = o.chainFrom ?? [];
+  const overlay = (id: string, stamp: string): Dataset => ({
+    id, role: 'overlay', of: 'cards', stamp, format: 3, min_client_format: 3,
+    file: asset(files, 'data-latest', `${id}-${stamp}.coqd`, Buffer.from(`${id}-${day}`)), raw: null, patches: [],
+  });
+  const datasets: Dataset[] = [
+    {
+      id: 'cards', role: 'base', of: null, stamp: `S${day}`, format: 3, min_client_format: o.minCoqd ?? 3,
+      file: asset(files, 'data-latest', `cards-S${day}.coqd`, d), raw: null,
+      patches: chain.map((from) => link('cards', 'coqp', from, `PATCH:${from + 1}`)),
     },
-    prices: { stamp: `P${day}`, format: 1, min_reader: 1, file: asset(files, 'data-latest', `prices-P${day}.coqr`, Buffer.from(`prices-${day}`)), patches: [] },
+    {
+      id: 'cards-index', role: 'index', of: 'cards', stamp: `S${day}`, format: 2, min_client_format: 2,
+      file: asset(files, 'data-latest', `cards-S${day}.coqi.zst`, Buffer.concat([Buffer.from('ZST!'), idxRaw])),
+      raw: { encoding: 'zstd', size: idxRaw.length, sha256: sha(idxRaw) },
+      patches: o.noDelta ? [] : chain.map((from) => link('cards', 'coqid', from, `IDXD:${from + 1}`)),
+    },
+    overlay('prices', `P${day}`),
+  ];
+  if (o.extraOverlay) datasets.push(overlay('rulings', `R${day}`));
+  const manifest: Manifest = {
+    manifest_version: 2, generated_at: `2026-10-0${day}T22:00:00Z`, run: `data-r${day}`, epoch: o.epoch ?? 1, rebase: chain.length === 0, datasets,
   };
   if (o.corrupt) files.set(o.corrupt, Buffer.from('garbage!'.repeat(10)));
   return { manifest, files };
@@ -129,15 +138,16 @@ function world(rel: Release) {
   return { deps, fs, text, log, setOpen: (b: Buffer) => (open = { sha: sha(b) }), setRelease: (r: Release) => (rel = r) };
 }
 
-const state = (day: number, o: Partial<LocalState> = {}): LocalState => ({ epoch: 1, cardsStamp: `S${day}`, cardsSha256: sha(dataset(day, 5000)), pricesStamp: `P${day}`, ...o });
+const state = (day: number, o: Partial<LocalState> = {}): LocalState => ({ epoch: 1, cardsStamp: `S${day}`, cardsSha256: sha(dataset(day, 5000)), overlays: { prices: `P${day}` }, ...o });
 const noTemp = (fs: Map<string, Buffer>) => [...fs.keys()].filter((k) => k.endsWith('.part') || k.endsWith('.tmp'));
 
 // ---- planner ---------------------------------------------------------------------------------------------------
 test('plan: first install is a full download', () => {
   const m = release(3, { chainFrom: [1, 2] }).manifest;
   const p = planSync(m, null);
-  assert.deepEqual(p.status === 'ok' && [p.cards.kind, p.prices.kind], ['full', 'full']);
-  assert.equal(planBytes(m, p), m.cards.file.size + m.cards.index.size + m.prices.file.size);
+  assert.deepEqual(p.status === 'ok' && [p.cards.kind, p.overlays.prices.kind], ['full', 'full']);
+  const r = resolve(m);
+  assert.equal(planBytes(m, p), r.cards.file.size + r.index.file.size + r.overlays[0].file.size);
 });
 
 test('plan: up to date, patch chain, broken chain, epoch, hash repair, cost', () => {
@@ -149,7 +159,7 @@ test('plan: up to date, patch chain, broken chain, epoch, hash repair, cost', ()
   };
   assert.deepEqual(cards(state(3)), { kind: 'up_to_date' });
   const c1 = cards(state(1));
-  assert.ok(c1.kind === 'patch' && c1.steps.map((s) => s.to).join() === 'S2,S3');
+  assert.ok(c1.kind === 'patch' && c1.steps.map((s) => s.patch.to).join() === 'S2,S3');
   const c2 = cards(state(2));
   assert.ok(c2.kind === 'patch' && c2.steps.length === 1);
   assert.deepEqual(cards(state(0)), { kind: 'full', reason: 'chain_broken' });
@@ -157,34 +167,47 @@ test('plan: up to date, patch chain, broken chain, epoch, hash repair, cost', ()
   assert.deepEqual(cards(state(3, { cardsSha256: 'f'.repeat(64) })), { kind: 'full', reason: 'hash_mismatch' });
   // tiny datasets: the chain costs more than the full files
   const heavy = release(3, { chainFrom: [1, 2] }).manifest;
-  heavy.cards.patches[0].patch.size = heavy.cards.file.size + heavy.cards.index.size;
+  const hr = resolve(heavy);
+  hr.cards.patches[0].patch.size = hr.cards.file.size + hr.index.file.size;
   assert.deepEqual(cards(state(1), heavy), { kind: 'full', reason: 'patches_not_smaller' });
   // a loop in the chain must not hang
   const loop = release(3, { chainFrom: [1, 2] }).manifest;
-  loop.cards.patches[1] = { ...loop.cards.patches[1], to: 'S1' };
+  const lc = resolve(loop).cards;
+  lc.patches[1] = { ...lc.patches[1], to: 'S1' };
   assert.deepEqual(cards(state(1), loop), { kind: 'full', reason: 'chain_broken' });
 });
 
-test('plan: prices are a full download unless patching is enabled; format gates', () => {
+test('plan: overlays are full downloads unless patching is enabled; format and version gates', () => {
   const m = release(3, { chainFrom: [1, 2] }).manifest;
   const p = planSync(m, state(2));
-  assert.ok(p.status === 'ok' && p.prices.kind === 'full');
+  assert.ok(p.status === 'ok' && p.overlays.prices.kind === 'full');
+  const pp = planSync(m, state(2), MODULE_FORMAT, { patchOverlays: true });
+  assert.ok(pp.status === 'ok' && pp.overlays.prices.kind === 'patch' === false);
   assert.equal(planSync(release(3).manifest, state(3)).status, 'ok');
-  const gate = planSync(release(3, { minCoqd: 3 }).manifest, state(3), MODULE_FORMAT);
-  assert.deepEqual(gate, { status: 'needs_app_update', required: { coqd: 3 } });
-  const v2 = { ...release(3).manifest, manifest_version: 2 };
-  assert.deepEqual(planSync(v2, state(3)), { status: 'needs_app_update', required: { manifest: 2 } });
+  const gate = planSync(release(3, { minCoqd: 9 }).manifest, state(3), MODULE_FORMAT);
+  assert.deepEqual(gate, { status: 'needs_app_update', required: { coqd: 9 } });
+  const v3 = { ...release(3).manifest, manifest_version: 3 };
+  assert.deepEqual(planSync(v3, state(3)), { status: 'needs_app_update', required: { manifest: 3 } });
+  // a second overlay is planned like prices, and a new epoch forces every overlay full
+  const two = release(3, { extraOverlay: true }).manifest;
+  const tp = planSync(two, state(3, { overlays: { prices: 'P3' } }));
+  assert.ok(tp.status === 'ok' && tp.overlays.prices.kind === 'up_to_date' && tp.overlays.rulings.kind === 'full');
+  const ep = planSync(two, state(3, { epoch: 0, overlays: { prices: 'P3', rulings: 'R3' } }));
+  assert.ok(ep.status === 'ok' && ep.overlays.rulings.kind === 'full' && ep.overlays.prices.kind === 'full');
 });
 
 test('parseManifest: accepts a real manifest, names the bad field otherwise', () => {
   const m = release(2, { chainFrom: [1] }).manifest;
   assert.deepEqual(parseManifest(JSON.parse(JSON.stringify(m))), m);
   const j = JSON.parse(JSON.stringify(m));
-  j.cards.file.url = 'http://insecure.test/x';
-  assert.throws(() => parseManifest(j), /cards\.file\.url/);
+  j.datasets[0].file.url = 'http://insecure.test/x';
+  assert.throws(() => parseManifest(j), /datasets\[0\]\.file\.url/);
   const k = JSON.parse(JSON.stringify(m));
-  delete k.cards.index.raw_sha256;
-  assert.throws(() => parseManifest(k), /raw_sha256/);
+  delete k.datasets[1].raw.sha256;
+  assert.throws(() => parseManifest(k), /raw\.sha256/);
+  const nb = JSON.parse(JSON.stringify(m));
+  nb.datasets.shift();
+  assert.throws(() => parseManifest(nb), /no base/);
   assert.throws(() => parseManifest('nope'), /root/);
 });
 
@@ -193,10 +216,10 @@ test('sync: first install downloads, verifies, unpacks the index and records sta
   const rel = release(1);
   const w = world(rel);
   const r = await runSync(w.deps, { dir: DIR, manifestUrl: 'https://m/manifest.json' });
-  assert.deepEqual([r.status, r.reason, r.prices, r.changed], ['full', 'no_local_data', 'updated', true]);
+  assert.deepEqual([r.status, r.reason, r.overlays, r.changed], ['full', 'no_local_data', 'updated', true]);
   assert.deepEqual(w.fs.get(P.coqd), dataset(1, 5000));
   assert.deepEqual(w.fs.get(P.coqi), Buffer.concat([Buffer.from('IDX:'), dataset(1, 5000)]));
-  assert.deepEqual(w.fs.get(P.coqr), Buffer.from('prices-1'));
+  assert.deepEqual(w.fs.get(P.overlay('prices')), Buffer.from('prices-1'));
   assert.deepEqual(JSON.parse(w.text.get(P.state)!), state(1));
   assert.deepEqual(noTemp(w.fs), []);
   assert.ok(![...w.fs.keys()].some((k) => k.endsWith('.zst.part')));
@@ -208,8 +231,8 @@ test('sync: next day applies the patch chain and the index deltas, then is idemp
   w.setRelease(release(3, { chainFrom: [1, 2] }));
   w.log.length = 0;
   const r = await runSync(w.deps, { dir: DIR });
-  assert.deepEqual([r.status, r.patches, r.prices], ['patched', 2, 'updated']);
-  assert.deepEqual(w.log.filter((l) => !l.startsWith('GET')), ['DL cards-S1-to-S2.coqp', 'applyPatch', 'DL cards-S1-to-S2.coqid', 'applyIndexDelta', 'DL cards-S2-to-S3.coqp', 'applyPatch', 'DL cards-S2-to-S3.coqid', 'applyIndexDelta', 'DL prices-P3.coqr']);
+  assert.deepEqual([r.status, r.patches, r.overlays], ['patched', 2, 'updated']);
+  assert.deepEqual(w.log.filter((l) => !l.startsWith('GET')), ['DL cards-S1-to-S2.coqp', 'applyPatch', 'DL cards-S1-to-S2.coqid', 'applyIndexDelta', 'DL cards-S2-to-S3.coqp', 'applyPatch', 'DL cards-S2-to-S3.coqid', 'applyIndexDelta', 'DL prices-P3.coqd']);
   assert.deepEqual(w.fs.get(P.coqd), dataset(3, 5000));
   assert.deepEqual(JSON.parse(w.text.get(P.state)!), state(3));
   assert.deepEqual(noTemp(w.fs), []);
@@ -222,7 +245,7 @@ test('sync: a corrupt patch falls back to the full files', async () => {
   const w = world(release(1));
   await runSync(w.deps, { dir: DIR });
   const rel = release(2, { chainFrom: [1] });
-  rel.files.set(rel.manifest.cards.patches[0].patch.url, Buffer.from('tampered'));
+  rel.files.set(resolve(rel.manifest).cards.patches[0].patch.url, Buffer.from('tampered'));
   w.setRelease(rel);
   const r = await runSync(w.deps, { dir: DIR });
   assert.deepEqual([r.status, r.reason], ['full', 'fallback']);
@@ -234,7 +257,7 @@ test('sync: a failed index delta is tolerated (index is rebuilt on demand)', asy
   const w = world(release(1));
   await runSync(w.deps, { dir: DIR });
   const rel = release(2, { chainFrom: [1] });
-  rel.files.delete(rel.manifest.cards.patches[0].index_delta!.url);
+  rel.files.delete(resolve(rel.manifest).index.patches[0].patch.url);
   w.setRelease(rel);
   const r = await runSync(w.deps, { dir: DIR });
   assert.deepEqual([r.status, r.patches], ['patched', 1]);
@@ -246,7 +269,7 @@ test('sync: a corrupt full download throws and leaves the old data alone', async
   await runSync(w.deps, { dir: DIR });
   const before = w.fs.get(P.coqd);
   const rel = release(2, { epoch: 2 });
-  rel.files.set(rel.manifest.cards.file.url, Buffer.from('truncated'));
+  rel.files.set(resolve(rel.manifest).cards.file.url, Buffer.from('truncated'));
   w.setRelease(rel);
   await assert.rejects(runSync(w.deps, { dir: DIR }), /failed verification/);
   assert.equal(w.fs.get(P.coqd), before);
@@ -256,11 +279,12 @@ test('sync: a corrupt full download throws and leaves the old data alone', async
 
 test('sync: an index that does not unpack to the published hash is rejected', async () => {
   const rel = release(1);
-  const zurl = rel.manifest.cards.index.url;
+  const ix = resolve(rel.manifest).index;
+  const zurl = ix.file.url;
   const bad = Buffer.concat([Buffer.from('ZST!'), Buffer.from('IDX:other')]);
   rel.files.set(zurl, bad);
-  rel.manifest.cards.index.sha256 = sha(bad);
-  rel.manifest.cards.index.size = bad.length;
+  ix.file.sha256 = sha(bad);
+  ix.file.size = bad.length;
   const w = world(rel);
   await assert.rejects(runSync(w.deps, { dir: DIR }), /decompressed data failed verification/);
   assert.equal(w.fs.has(P.coqd), false);
@@ -281,4 +305,23 @@ test('sync: epoch change replaces everything with full files', async () => {
   const r = await runSync(w.deps, { dir: DIR });
   assert.deepEqual([r.status, r.reason], ['full', 'epoch_changed']);
   assert.equal(JSON.parse(w.text.get(P.state)!).epoch, 2);
+});
+
+test('sync: a newer manifest version is refused before its fields are read', async () => {
+  const rel = release(2);
+  const w = world(rel);
+  rel.manifest = { manifest_version: 3, shape: 'unknown' } as unknown as Manifest;
+  const r = await runSync(w.deps, { dir: DIR });
+  assert.deepEqual([r.status, r.required, r.changed], ['needs_app_update', { manifest: 3 }, false]);
+});
+
+test('sync: a second overlay is downloaded like prices, and a new epoch forgets stale overlays', async () => {
+  const w = world(release(1, { extraOverlay: true }));
+  const r = await runSync(w.deps, { dir: DIR });
+  assert.equal(r.overlays, 'updated');
+  assert.deepEqual(w.fs.get(P.overlay('rulings')), Buffer.from('rulings-1'));
+  assert.deepEqual(JSON.parse(w.text.get(P.state)!).overlays, { prices: 'P1', rulings: 'R1' });
+  w.setRelease(release(2, { epoch: 2 })); // rulings overlay gone from the manifest
+  await runSync(w.deps, { dir: DIR });
+  assert.deepEqual(JSON.parse(w.text.get(P.state)!).overlays, { prices: 'P2' });
 });

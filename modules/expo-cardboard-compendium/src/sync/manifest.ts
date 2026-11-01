@@ -1,4 +1,4 @@
-// Types and validation for manifest.json (written by `coqc manifest`; see docs/roadmap.md, Milestone 1).
+// Types and validation for manifest.json v2 (written by `coqc manifest`; see docs/manifest.md).
 
 export interface Asset {
   name: string;
@@ -6,28 +6,32 @@ export interface Asset {
   size: number;
   sha256: string;
 }
-export interface IndexAsset extends Asset {
+export type Role = 'base' | 'index' | 'overlay';
+/** One link of a dataset's patch chain. */
+export interface Link {
+  from: string;
+  to: string;
+  at: string;
+  patch: Asset;
+}
+/** The shipped file is compressed; these describe the decompressed bytes (what index deltas refer to). */
+export interface Raw {
   encoding: 'zstd';
-  raw_size: number;
-  raw_sha256: string;
+  size: number;
+  sha256: string;
 }
-export interface CardPatch {
-  from: string;
-  to: string;
-  at: string;
-  patch: Asset;
-  index_delta: Asset | null;
-}
-export interface PricePatch {
-  from: string;
-  to: string;
-  at: string;
-  patch: Asset;
-}
-export interface MinFormat {
-  coqd: number;
-  coqi: number;
-  coqr: number;
+export interface Dataset {
+  id: string;
+  role: Role;
+  /** Base this index/overlay belongs to; null for a base. */
+  of: string | null;
+  stamp: string;
+  format: number;
+  /** Smallest reader version able to open it; above this build's (see plan.ts) => "update the app". */
+  min_client_format: number;
+  file: Asset;
+  raw: Raw | null;
+  patches: Link[];
 }
 export interface Manifest {
   manifest_version: number;
@@ -35,13 +39,23 @@ export interface Manifest {
   run: string;
   epoch: number;
   rebase: boolean;
-  min_client_format: MinFormat;
-  cards: { stamp: string; format: number; min_reader: number; file: Asset; index: IndexAsset; patches: CardPatch[] };
-  prices: { stamp: string; format: number; min_reader: number; file: Asset; patches: PricePatch[] };
+  datasets: Dataset[];
 }
 
 /** Manifest versions this module understands. A newer one means the app must be updated. */
-export const SUPPORTED_MANIFEST_VERSION = 1;
+export const SUPPORTED_MANIFEST_VERSION = 2;
+
+/** The datasets this module syncs: the `cards` base, its `cards-index`, and any overlays (prices, ...) of `cards`. */
+export interface Resolved {
+  cards: Dataset;
+  index: Dataset;
+  overlays: Dataset[];
+}
+export function resolve(m: Manifest): Resolved {
+  const cards = m.datasets.find((d) => d.id === 'cards' && d.role === 'base') ?? bad('datasets (no base "cards")');
+  const index = m.datasets.find((d) => d.role === 'index' && d.of === 'cards') ?? bad('datasets (no index of "cards")');
+  return { cards, index, overlays: m.datasets.filter((d) => d.role === 'overlay' && d.of === 'cards') };
+}
 
 const bad = (path: string): never => {
   throw new Error(`invalid manifest: ${path}`);
@@ -61,62 +75,48 @@ function asset(v: unknown, p: string): Asset {
   return { name: str(o.name, `${p}.name`), url, size: num(o.size, `${p}.size`), sha256 };
 }
 
+function link(v: unknown, p: string): Link {
+  const o = obj(v, p);
+  return { from: str(o.from, `${p}.from`), to: str(o.to, `${p}.to`), at: str(o.at, `${p}.at`), patch: asset(o.patch, `${p}.patch`) };
+}
+
 /** Validate untrusted JSON into a Manifest (throws `invalid manifest: <path>`); extra fields are ignored. */
 export function parseManifest(json: unknown): Manifest {
   const m = obj(json, 'root');
-  const version = num(m.manifest_version, 'manifest_version');
-  const mf = obj(m.min_client_format, 'min_client_format');
-  const cards = obj(m.cards, 'cards');
-  const prices = obj(m.prices, 'prices');
-  const idx = obj(cards.index, 'cards.index');
-  if (idx.encoding !== 'zstd') bad('cards.index.encoding');
-  return {
-    manifest_version: version,
+  const datasets = arr(m.datasets, 'datasets').map((x, i): Dataset => {
+    const p = `datasets[${i}]`;
+    const o = obj(x, p);
+    const role = o.role;
+    if (role !== 'base' && role !== 'index' && role !== 'overlay') bad(`${p}.role`);
+    const of = o.of == null ? null : str(o.of, `${p}.of`);
+    if ((role === 'base') !== (of === null)) bad(`${p}.of`);
+    let raw: Raw | null = null;
+    if (role === 'index') {
+      const r = obj(o.raw, `${p}.raw`);
+      if (r.encoding !== 'zstd') bad(`${p}.raw.encoding`);
+      raw = { encoding: 'zstd', size: num(r.size, `${p}.raw.size`), sha256: str(r.sha256, `${p}.raw.sha256`) };
+    }
+    return {
+      id: str(o.id, `${p}.id`),
+      role: role as Role,
+      of,
+      stamp: str(o.stamp, `${p}.stamp`),
+      format: num(o.format, `${p}.format`),
+      min_client_format: num(o.min_client_format, `${p}.min_client_format`),
+      file: asset(o.file, `${p}.file`),
+      raw,
+      patches: arr(o.patches, `${p}.patches`).map((l, k) => link(l, `${p}.patches[${k}]`)),
+    };
+  });
+  if (new Set(datasets.map((d) => d.id)).size !== datasets.length) bad('datasets (repeated id)');
+  const out: Manifest = {
+    manifest_version: num(m.manifest_version, 'manifest_version'),
     generated_at: str(m.generated_at, 'generated_at'),
     run: str(m.run, 'run'),
     epoch: num(m.epoch, 'epoch'),
     rebase: typeof m.rebase === 'boolean' ? m.rebase : bad('rebase'),
-    min_client_format: {
-      coqd: num(mf.coqd, 'min_client_format.coqd'),
-      coqi: num(mf.coqi, 'min_client_format.coqi'),
-      coqr: num(mf.coqr, 'min_client_format.coqr'),
-    },
-    cards: {
-      stamp: str(cards.stamp, 'cards.stamp'),
-      format: num(cards.format, 'cards.format'),
-      min_reader: num(cards.min_reader, 'cards.min_reader'),
-      file: asset(cards.file, 'cards.file'),
-      index: {
-        ...asset(idx, 'cards.index'),
-        encoding: 'zstd',
-        raw_size: num(idx.raw_size, 'cards.index.raw_size'),
-        raw_sha256: str(idx.raw_sha256, 'cards.index.raw_sha256'),
-      },
-      patches: arr(cards.patches, 'cards.patches').map((x, i) => {
-        const o = obj(x, `cards.patches[${i}]`);
-        return {
-          from: str(o.from, `cards.patches[${i}].from`),
-          to: str(o.to, `cards.patches[${i}].to`),
-          at: str(o.at, `cards.patches[${i}].at`),
-          patch: asset(o.patch, `cards.patches[${i}].patch`),
-          index_delta: o.index_delta == null ? null : asset(o.index_delta, `cards.patches[${i}].index_delta`),
-        };
-      }),
-    },
-    prices: {
-      stamp: str(prices.stamp, 'prices.stamp'),
-      format: num(prices.format, 'prices.format'),
-      min_reader: num(prices.min_reader, 'prices.min_reader'),
-      file: asset(prices.file, 'prices.file'),
-      patches: arr(prices.patches, 'prices.patches').map((x, i) => {
-        const o = obj(x, `prices.patches[${i}]`);
-        return {
-          from: str(o.from, `prices.patches[${i}].from`),
-          to: str(o.to, `prices.patches[${i}].to`),
-          at: str(o.at, `prices.patches[${i}].at`),
-          patch: asset(o.patch, `prices.patches[${i}].patch`),
-        };
-      }),
-    },
+    datasets,
   };
+  resolve(out);
+  return out;
 }
