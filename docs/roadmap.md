@@ -32,7 +32,7 @@ skipped), so the job is idempotent: it exits cleanly if the bulk `updated_at` is
 
 Release layout:
 - **`data-latest`** (one rolling release, fixed URL): `manifest.json` plus the current full files `cards-<stamp>.coqd`,
-  `cards-<stamp>.coqi.zst`, `prices-<date>.coqr`. File names carry the stamp, so a new run uploads the new files first, the manifest
+  `cards-<stamp>.coqi.zst`, `prices-<date>.coqd`. File names carry the stamp, so a new run uploads the new files first, the manifest
   last, and only then deletes the old full files: a client never sees a manifest pointing at a missing file.
 - **`data-<stamp>`** (one immutable prerelease per run, tag `data-YYYYMMDDHHMM`): the patches from the previous run
   `cards-<prev>-to-<stamp>.coqp`, `.coqid`, `prices-<old>-to-<new>.coqx`; kept 30 days, then the release and its tag are deleted.

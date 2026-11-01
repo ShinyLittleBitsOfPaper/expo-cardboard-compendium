@@ -34,11 +34,13 @@ for i in 0 1 2 3; do
     "$BIN" patch "$PREV" "$W/cards-$S.coqd" -o "$W/cards-$P-to-$S.coqp" >/dev/null
     "$BIN" index-diff "${PREV%.coqd}.coqi" "$W/cards-$S.coqi" -o "$W/cards-$P-to-$S.coqid" >/dev/null
     printf 'COQPpatch%s' "$d" > "$W/prices-$PPREV-to-$PS.coqp"
-    ARGS+=(--cards-patch "$W/cards-$P-to-$S.coqp" --index-delta "$W/cards-$P-to-$S.coqid" --prices-patch "$W/prices-$PPREV-to-$PS.coqp")
+    CP=",patch=$W/cards-$P-to-$S.coqp"; IP=",patch=$W/cards-$P-to-$S.coqid"; PP=",patch=$W/prices-$PPREV-to-$PS.coqp"
+  else CP=""; IP=""; PP=""
   fi
   [ -f "$T/gh/data-latest/manifest.json" ] && ARGS+=(--prev "$T/gh/data-latest/manifest.json")
   RUNTAG="data-${at//-/}2200"
-  "$BIN" manifest --cards "$W/cards-$S.coqd" --index "$W/cards-$S.coqi.zst" --prices "$W/prices-$PS.coqd" --repo o/r \
+  "$BIN" manifest --base "cards=$W/cards-$S.coqd$CP" --index "cards-index=$W/cards-$S.coqi.zst,of=cards,prefix=cards-$IP" \
+    --overlay "prices=$W/prices-$PS.coqd,of=cards$PP" --repo o/r \
     --run "$RUNTAG" --at "${at}T22:00:00Z" --keep-since "$(date -u -d "$at - 30 days" +%Y-%m-%dT%H:%M:%SZ)" "${ARGS[@]}" \
     -o "$W/manifest.json" | tee "$W/assets.txt" >/dev/null
   # publish: dry run must not touch anything, the real one must
@@ -50,27 +52,27 @@ for i in 0 1 2 3; do
   got="$(ls "$T/gh/data-latest" | sort | tr '\n' ' ')"
   want="$(echo "cards-$S.coqd cards-$S.coqi.zst manifest.json prices-$PS.coqd" | tr ' ' '\n' | sort | tr '\n' ' ')"
   [ "$got" = "$want" ] || fail "day $d data-latest: [$got] want [$want]"
-  [ "$(sha "$T/gh/data-latest/cards-$S.coqd")" = "$(jq -r .cards.file.sha256 "$T/gh/data-latest/manifest.json")" ] || fail "manifest hash"
-  echo "day $d ok ($(jq -c '[.rebase,(.cards.patches|length),(.prices.patches|length)]' "$T/gh/data-latest/manifest.json") rebase,cards chain,prices chain)"
+  [ "$(sha "$T/gh/data-latest/cards-$S.coqd")" = "$(jq -r .datasets[0].file.sha256 "$T/gh/data-latest/manifest.json")" ] || fail "manifest hash"
+  echo "day $d ok ($(jq -c '[.rebase,(.datasets[0].patches|length),(.datasets[2].patches|length)]' "$T/gh/data-latest/manifest.json") rebase,cards chain,prices chain)"
   if [ "$d" = 3 ]; then
     # simulated client: day 1 -> day 3 through the chain, hashes must match the full files
     M="$T/gh/data-latest/manifest.json"; C="$T/client"; mkdir -p "$C"
     url2path() { echo "$MOCK_GH_DIR/$(echo "$1" | sed 's|.*/download/||')"; }
     cp "$T/w1/cards-202609010905.coqd" "$C/cur.coqd"; "$BIN" unzst "$T/w1/cards-202609010905.coqi.zst" -o "$C/cur.coqi" >/dev/null
-    for k in $(seq 0 $(( $(jq '.cards.patches|length' "$M") - 1 ))); do
-      "$BIN" apply "$C/cur.coqd" "$(url2path "$(jq -r ".cards.patches[$k].patch.url" "$M")")" -o "$C/n.coqd" >/dev/null
-      [ "$(sha "$(url2path "$(jq -r ".cards.patches[$k].patch.url" "$M")")")" = "$(jq -r ".cards.patches[$k].patch.sha256" "$M")" ] || fail "patch hash $k"
-      "$BIN" index-apply "$C/cur.coqi" "$(url2path "$(jq -r ".cards.patches[$k].index_delta.url" "$M")")" -o "$C/n.coqi" >/dev/null
+    for k in $(seq 0 $(( $(jq '.datasets[0].patches|length' "$M") - 1 ))); do
+      "$BIN" apply "$C/cur.coqd" "$(url2path "$(jq -r ".datasets[0].patches[$k].patch.url" "$M")")" -o "$C/n.coqd" >/dev/null
+      [ "$(sha "$(url2path "$(jq -r ".datasets[0].patches[$k].patch.url" "$M")")")" = "$(jq -r ".datasets[0].patches[$k].patch.sha256" "$M")" ] || fail "patch hash $k"
+      "$BIN" index-apply "$C/cur.coqi" "$(url2path "$(jq -r ".datasets[1].patches[$k].patch.url" "$M")")" -o "$C/n.coqi" >/dev/null
       mv "$C/n.coqd" "$C/cur.coqd"; mv "$C/n.coqi" "$C/cur.coqi"
     done
-    [ "$(sha "$C/cur.coqd")" = "$(jq -r .cards.file.sha256 "$M")" ] || fail "chain end != full cards file"
-    [ "$(sha "$C/cur.coqi")" = "$(jq -r .cards.index.raw_sha256 "$M")" ] || fail "chain end != raw index"
-    echo "client: day 1 -> day 3 via $(jq '.cards.patches|length' "$M") patches, cards + index hashes match"
+    [ "$(sha "$C/cur.coqd")" = "$(jq -r .datasets[0].file.sha256 "$M")" ] || fail "chain end != full cards file"
+    [ "$(sha "$C/cur.coqi")" = "$(jq -r .datasets[1].raw.sha256 "$M")" ] || fail "chain end != raw index"
+    echo "client: day 1 -> day 3 via $(jq '.datasets[0].patches|length' "$M") patches, cards + index hashes match"
   fi
 done
 # day 4 is 47 days later: old chain links expired, and run releases older than the window were pruned
 M="$T/gh/data-latest/manifest.json"
-[ "$(jq '.cards.patches|length' "$M")" = 1 ] || fail "expired links not dropped: $(jq -c '[.cards.patches[]|.from]' "$M")"
+[ "$(jq '.datasets[0].patches|length' "$M")" = 1 ] || fail "expired links not dropped: $(jq -c '[.datasets[0].patches[]|.from]' "$M")"
 ls "$T/gh" | grep -q '^data-2026090' && fail "expired run releases not pruned: $(ls "$T/gh")"
 ls "$T/gh" | grep -qx data-202610202200 || fail "newest run release missing"
 echo "pipeline test passed"

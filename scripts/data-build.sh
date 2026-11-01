@@ -6,7 +6,7 @@
 # 1. restore the current release from `data-latest` (row stability via --prev, patch base); none => first release
 # 2. scripts/daily.sh + scripts/daily-prices.sh (compile, patch, index, price delta; each verifies its own replay)
 # 3. `coqc verify` of the new cards file against the raw bulk file (0 mismatches required)
-# 4. compress the index (.coqi.zst) and write manifest.json
+# 4. compress the index (.coqi.zst) and write manifest.json (v2: datasets cards/cards-index/prices, see docs/manifest.md)
 # Result: <stage>/ holds manifest.json, assets.txt, the full files and this run's patches; or <stage>/NOTHING when
 # neither Scryfall nor MTGJSON has new data (idempotent: the workflow then ends cleanly).
 # Env: GITHUB_REPOSITORY (OWNER/REPO, required), COQC_USER_AGENT, RETAIN_DAYS (30), REBASE=1 (force a new chain),
@@ -27,21 +27,24 @@ fetch() {  # url dest sha256
 }
 
 echo "== restoring the current release"
-if curl -fsSL --retry 3 -o "$PREVM" "$MURL"; then
-  PSTAMP="$(jq -r .cards.stamp "$PREVM")"; PPRICE="$(jq -r .prices.stamp "$PREVM")"
+ds() {  # dataset-id jq-expr : a field of that dataset in the previous manifest (manifest v2)
+  jq -r --arg id "$1" ".datasets[] | select(.id == \$id) | $2" "$PREVM"
+}
+if curl -fsSL --retry 3 -o "$PREVM" "$MURL" && jq -e '.manifest_version == 2' "$PREVM" >/dev/null 2>&1; then
+  PSTAMP="$(ds cards .stamp)"; PPRICE="$(ds prices .stamp)"
   echo "current: cards $PSTAMP prices $PPRICE (epoch $(jq -r .epoch "$PREVM"))"
-  CF="data/daily/releases/$(jq -r .cards.file.name "$PREVM")"
-  [ -f "$CF" ] || fetch "$(jq -r .cards.file.url "$PREVM")" "$CF" "$(jq -r .cards.file.sha256 "$PREVM")"
-  PRF="data/prices/releases/$(jq -r .prices.file.name "$PREVM")"
-  [ -f "$PRF" ] || fetch "$(jq -r .prices.file.url "$PREVM")" "$PRF" "$(jq -r .prices.file.sha256 "$PREVM")"
+  CF="data/daily/releases/$(ds cards .file.name)"
+  [ -f "$CF" ] || fetch "$(ds cards .file.url)" "$CF" "$(ds cards .file.sha256)"
+  PRF="data/prices/releases/$(ds prices .file.name)"
+  [ -f "$PRF" ] || fetch "$(ds prices .file.url)" "$PRF" "$(ds prices .file.sha256)"
   IDX="${CF%.coqd}.coqi"
   if [ ! -f "$IDX" ]; then
-    fetch "$(jq -r .cards.index.url "$PREVM")" "$IDX.zst" "$(jq -r .cards.index.sha256 "$PREVM")"
+    fetch "$(ds cards-index .file.url)" "$IDX.zst" "$(ds cards-index .file.sha256)"
     "$BIN" unzst "$IDX.zst" -o "$IDX" >/dev/null; rm -f "$IDX.zst"
-    [ "$(sha256sum "$IDX" | cut -d' ' -f1)" = "$(jq -r .cards.index.raw_sha256 "$PREVM")" ] || { echo "index hash mismatch" >&2; exit 1; }
+    [ "$(sha256sum "$IDX" | cut -d' ' -f1)" = "$(ds cards-index .raw.sha256)" ] || { echo "index hash mismatch" >&2; exit 1; }
   fi
 else
-  rm -f "$PREVM"; PSTAMP=""; PPRICE=""; echo "no published release yet: first release"
+  rm -f "$PREVM"; PSTAMP=""; PPRICE=""; echo "no published (v2) release yet: first release"
 fi
 
 scripts/daily.sh
@@ -59,18 +62,19 @@ echo "== verifying $CARDS against the raw bulk file"
 echo "== staging"
 cp "$CARDS" "$STAGE/"; cp "$PRICES" "$STAGE/"
 "$BIN" zst "${CARDS%.coqd}.coqi" -o "$STAGE/cards-$CS.coqi.zst" --level 19
-ARGS=()
+# One spec per dataset: id=file[,patch=...] (see `coqc` usage). Patches only when the stamp moved.
+CSPEC="cards=$STAGE/cards-$CS.coqd"; ISPEC="cards-index=$STAGE/cards-$CS.coqi.zst,of=cards,prefix=cards-"; PSPEC="prices=$STAGE/prices-$PS.coqd,of=cards"
 if [ -n "$PSTAMP" ] && [ "$CS" != "$PSTAMP" ]; then
   cp "data/daily/patches/$PSTAMP-to-$CS.coqp" "$STAGE/cards-$PSTAMP-to-$CS.coqp"
   cp "data/daily/patches/$PSTAMP-to-$CS.coqid" "$STAGE/cards-$PSTAMP-to-$CS.coqid"
-  ARGS+=(--cards-patch "$STAGE/cards-$PSTAMP-to-$CS.coqp" --index-delta "$STAGE/cards-$PSTAMP-to-$CS.coqid")
+  CSPEC+=",patch=$STAGE/cards-$PSTAMP-to-$CS.coqp"; ISPEC+=",patch=$STAGE/cards-$PSTAMP-to-$CS.coqid"
 fi
 if [ -n "$PPRICE" ] && [ "$PS" != "$PPRICE" ]; then
   cp "data/prices/patches/$PPRICE-to-$PS.coqp" "$STAGE/prices-$PPRICE-to-$PS.coqp"
-  ARGS+=(--prices-patch "$STAGE/prices-$PPRICE-to-$PS.coqp")
+  PSPEC+=",patch=$STAGE/prices-$PPRICE-to-$PS.coqp"
 fi
+ARGS=(--base "$CSPEC" --index "$ISPEC" --overlay "$PSPEC")
 [ -f "$PREVM" ] && ARGS+=(--prev "$PREVM")
 [ "${REBASE:-0}" = 1 ] && ARGS+=(--rebase)
-"$BIN" manifest --cards "$STAGE/cards-$CS.coqd" --index "$STAGE/cards-$CS.coqi.zst" --prices "$STAGE/prices-$PS.coqd" \
-  --repo "$REPO" --run "data-$(date -u +%Y%m%d%H%M)" --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+"$BIN" manifest --repo "$REPO" --run "data-$(date -u +%Y%m%d%H%M)" --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --keep-since "$(date -u -d "$RETAIN_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)" "${ARGS[@]}" -o "$STAGE/manifest.json" | tee "$STAGE/assets.txt"

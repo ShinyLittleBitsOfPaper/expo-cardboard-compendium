@@ -61,7 +61,7 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
 - **S4 Overlays, manifest v2, sync and TS API generalised.** Split (proposed 0.0.2-24):
   - **S4a (done 0.0.2-24):** price overlay = ordinary `.coqd` (schema `mtg-prices`, columnar table) + `.coqp`; `.coqr`/`.coqx` and
     `format/src/prices.rs` deleted; columnar table layout + column-delta patch mode added to COQD/COQP; scripts, docs, CLI renamed.
-  - **S4b:** manifest v2 (list of datasets with roles base/index/overlay, `min_client_format` per dataset instead of fixed `coqd/coqi/coqr`),
+  - **S4b (done 0.0.2-25, see docs/manifest.md):** manifest v2 (list of datasets with roles base/index/overlay, `min_client_format` per dataset instead of fixed `coqd/coqi/coqr`),
     `coqc manifest` and `data-*.sh` over it.
   - **S4c:** module TS sync over manifest v2 (generic apply of `.coqp` incl. overlays; engine `applyPatch` for any dataset), engine attaches an
     overlay to its base (price predicates in search), generic `getRecords`/`getByKey`, MTG wrappers thin.

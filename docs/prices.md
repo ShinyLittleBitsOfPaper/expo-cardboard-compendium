@@ -19,5 +19,5 @@ normal/foil/etched. Buylists, other providers (cardkingdom, manapool) and histor
 
 CLI: `coqc idmap`, `coqc prices`, `coqc prices-patch`, `coqc prices-apply`, `coqc price <prices.coqd> <cards.coqd> <name>`.
 Pipeline: `scripts/daily-prices.sh` (run after `scripts/daily.sh`).
-Not done (S4b/S4c): manifest v2 still has fixed `cards`/`prices` entries and a `min_client_format.coqr` field; the TypeScript sync
-still names `prices.coqr` and `MODULE_FORMAT` is stale (`coqd: 2`); price predicates in search (`usd>1`) need the engine to attach an overlay.
+The manifest lists prices as an `overlay` dataset (v2, S4b; docs/manifest.md). Not done (S4c): the TypeScript sync
+still reads manifest v1 and names `prices.coqr` and `MODULE_FORMAT` is stale (`coqd: 2`); price predicates in search (`usd>1`) need the engine to attach an overlay.

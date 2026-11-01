@@ -32,9 +32,9 @@ USAGE:
   coqc price   <prices.coqd> <cards.coqd> <card name>  show stored prices of every printing of a card
   coqc zst     <in> -o <out> [--level N]           zstd-compress a file (the published index is .coqi.zst, level 19)
   coqc unzst   <in.zst> -o <out>                   decompress it
-  coqc manifest --cards <c.coqd> --index <c.coqi.zst> --prices <p.coqd> --run <data-tag> --at <ISO UTC> --keep-since <ISO UTC>
-               [--repo OWNER/REPO | --base-url URL] [--prev manifest.json] [--cards-patch f.coqp --index-delta f.coqid]
-               [--prices-patch f.coqp] [--rebase] -o manifest.json     (see docs/roadmap.md, Milestone 1)
+  coqc manifest --base ID=f.coqd[,patch=f.coqp][,prefix=P-] [--base ...] [--index ID=f.coqi.zst[,of=BASE][,patch=f.coqid][,prefix=P-]]
+               [--overlay ID=f.coqd[,of=BASE][,patch=f.coqp][,prefix=P-] ...] --run <data-tag> --at <ISO UTC> --keep-since <ISO UTC>
+               [--repo OWNER/REPO | --base-url URL] [--prev manifest.json] [--rebase] -o manifest.json   (manifest v2, docs/manifest.md)
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
 
@@ -566,11 +566,38 @@ fn u16_at(b: &[u8], i: usize) -> u16 {
     b.get(i..i + 2).map_or(0, |s| u16::from_le_bytes([s[0], s[1]]))
 }
 
-/// `cards-<stamp>.ext` -> stamp
+/// `<prefix><stamp>.ext` -> stamp
 fn stamp_of(path: &str, prefix: &str) -> String {
     let n = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
     let stem = n.strip_prefix(prefix).unwrap_or_else(|| die(&format!("{n}: expected a name starting with {prefix}")));
     stem.split('.').next().unwrap_or(stem).to_string()
+}
+
+/// `id=file[,patch=f][,of=id][,prefix=p]` (every occurrence of `flag`).
+struct DsSpec {
+    id: String,
+    file: String,
+    opts: Vec<(String, String)>,
+}
+
+fn ds_specs(args: &[String], flag: &str) -> Vec<DsSpec> {
+    let mut v = Vec::new();
+    for (i, a) in args.iter().enumerate() {
+        if a != flag {
+            continue;
+        }
+        let spec = args.get(i + 1).unwrap_or_else(|| die(&format!("{flag} needs id=file[,patch=f]")));
+        let mut parts = spec.split(',');
+        let (id, file) = parts
+            .next()
+            .and_then(|h| h.split_once('='))
+            .unwrap_or_else(|| die(&format!("{flag} {spec}: expected id=file")));
+        let opts = parts
+            .map(|o| o.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).unwrap_or_else(|| die(&format!("{flag} {spec}: bad option {o}"))))
+            .collect();
+        v.push(DsSpec { id: id.to_string(), file: file.to_string(), opts });
+    }
+    v
 }
 
 fn cmd_manifest(args: &[String]) {
@@ -580,58 +607,95 @@ fn cmd_manifest(args: &[String]) {
     let base_url = flag_value(args, "--base-url").unwrap_or_else(|| {
         format!("https://github.com/{}/releases/download", flag_value(args, "--repo").unwrap_or_else(|| die("need --repo or --base-url")))
     });
-    let (cards_p, index_p, prices_p) = (req("--cards"), req("--index"), req("--prices"));
-
-    let cb = rd(&cards_p);
-    let parsed = parse(&cb).unwrap_or_else(|e| die(&format!("{cards_p}: {e}")));
-    let (format, min_reader) = (u16_at(&cb, 4), u16_at(&cb, 6));
-    let raw = zstd::decode_all(&rd(&index_p)[..]).unwrap_or_else(|e| die(&format!("{index_p}: not zstd: {e}")));
-    if raw.get(..4) != Some(b"COQI") {
-        die(&format!("{index_p}: not a compressed .coqi"));
+    let (bases, indexes, overlays) = (ds_specs(args, "--base"), ds_specs(args, "--index"), ds_specs(args, "--overlay"));
+    if bases.is_empty() {
+        die("need at least one --base id=file.coqd");
     }
-    // The index must belong to the cards file (its header carries the dataset's SHA-256).
-    if raw.get(6..38).map(|s| s.iter().map(|b| format!("{b:02x}")).collect::<String>()) != Some(sha_hex(&cb)) {
-        die(&format!("{index_p}: built from a different dataset than {cards_p}"));
+    let sole_base = (bases.len() == 1).then(|| bases[0].id.clone());
+    let mut datasets: Vec<NewDataset> = Vec::new();
+    let mut base_bytes: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut epoch: Option<u32> = None;
+    for (role, specs) in [(Role::Base, &bases), (Role::Index, &indexes), (Role::Overlay, &overlays)] {
+        for sp in specs.iter() {
+            let opt = |k: &str| sp.opts.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
+            for (k, _) in &sp.opts {
+                if !["patch", "of", "prefix"].contains(&k.as_str()) {
+                    die(&format!("{}: unknown option {k}", sp.id));
+                }
+            }
+            let of = if role == Role::Base { None } else { Some(opt("of").or_else(|| sole_base.clone()).unwrap_or_else(|| die(&format!("{}: needs of=<base id>", sp.id)))) };
+            let prefix = opt("prefix").unwrap_or_else(|| format!("{}-", sp.id));
+            let b = rd(&sp.file);
+            let (format, min_reader, raw) = match role {
+                Role::Index => {
+                    let raw = zstd::decode_all(&b[..]).unwrap_or_else(|e| die(&format!("{}: not zstd: {e}", sp.file)));
+                    if raw.get(..4) != Some(b"COQI") {
+                        die(&format!("{}: not a compressed .coqi", sp.file));
+                    }
+                    let v = u16_at(&raw, 4);
+                    // The index must belong to its base (its header carries the dataset's SHA-256).
+                    let of_id = of.as_deref().unwrap_or_default();
+                    let want = base_bytes.iter().find(|(i, _)| i == of_id).map(|(_, b)| sha_hex(b));
+                    let have = raw.get(6..38).map(|s| s.iter().map(|b| format!("{b:02x}")).collect::<String>());
+                    if want.is_none() || have != want {
+                        die(&format!("{}: built from a different dataset than base {of_id}", sp.file));
+                    }
+                    (v, v, Some(("zstd".to_string(), raw.len() as u64, sha_hex(&raw))))
+                }
+                _ => {
+                    if b.get(..4) != Some(b"COQD") {
+                        die(&format!("{}: not a .coqd", sp.file));
+                    }
+                    if role == Role::Base {
+                        let parsed = parse(&b).unwrap_or_else(|e| die(&format!("{}: {e}", sp.file)));
+                        let e = parsed.meta().unwrap_or_else(|e| die(&e.to_string())).epoch;
+                        if epoch.is_some_and(|x| x != e) {
+                            die(&format!("{}: epoch {e} differs from the other base datasets", sp.file));
+                        }
+                        epoch = Some(e);
+                        base_bytes.push((sp.id.clone(), b.clone()));
+                    }
+                    (u16_at(&b, 4), u16_at(&b, 6), None)
+                }
+            };
+            datasets.push(NewDataset {
+                id: sp.id.clone(),
+                role,
+                of,
+                stamp: stamp_of(&sp.file, &prefix),
+                prefix,
+                format,
+                min_reader,
+                file: measure(&sp.file),
+                raw,
+                patch: opt("patch").map(|p| measure(&p)),
+            });
+        }
     }
-    let pb = rd(&prices_p);
-    if pb.get(..4) != Some(b"COQD") {
-        die(&format!("{prices_p}: not a .coqd price overlay"));
-    }
-    let measure_opt = |f: &str| flag_value(args, f).map(|p| measure(&p));
-    let cards_patch = measure_opt("--cards-patch").map(|p| (p, measure_opt("--index-delta")));
     let inp = Inputs {
         base_url,
         run_tag: req("--run"),
         generated_at: req("--at"),
         keep_since: req("--keep-since"),
         force_rebase: args.iter().any(|a| a == "--rebase"),
-        cards: NewCards {
-            stamp: stamp_of(&cards_p, "cards-"),
-            epoch: parsed.meta().unwrap_or_else(|e| die(&e.to_string())).epoch,
-            format,
-            min_reader,
-            file: measure(&cards_p),
-            index: IndexMeasured { file: measure(&index_p), raw_size: raw.len() as u64, raw_sha256: sha_hex(&raw) },
-            index_version: u16_at(&raw, 4),
-            patch: cards_patch,
-        },
-        prices: NewPrices {
-            stamp: stamp_of(&prices_p, "prices-"),
-            format: u16_at(&pb, 4),
-            min_reader: u16_at(&pb, 6),
-            file: measure(&prices_p),
-            patch: measure_opt("--prices-patch"),
-        },
+        epoch: epoch.unwrap_or(0),
+        datasets,
     };
-    let prev: Option<Manifest> = flag_value(args, "--prev").map(|p| {
-        serde_json::from_slice(&rd(&p)).unwrap_or_else(|e| die(&format!("{p}: {e}")))
+    // A manifest of another version (or unreadable) is no usable history: the release starts a new chain.
+    let prev: Option<Manifest> = flag_value(args, "--prev").and_then(|p| {
+        let b = rd(&p);
+        match serde_json::from_slice::<Manifest>(&b) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                eprintln!("note: {p} is not a v{MANIFEST_VERSION} manifest ({e}); starting a new chain");
+                None
+            }
+        }
     });
     let m = build(&inp, prev.as_ref()).unwrap_or_else(|e| die(&e));
     std::fs::write(&out, serde_json::to_string_pretty(&m).unwrap() + "\n").unwrap_or_else(|e| die(&e.to_string()));
-    println!(
-        "{out}: cards {} prices {} epoch {} rebase {} chains cards {} prices {}",
-        m.cards.stamp, m.prices.stamp, m.epoch, m.rebase, m.cards.patches.len(), m.prices.patches.len()
-    );
+    let list: Vec<String> = m.datasets.iter().map(|d| format!("{} {} (chain {})", d.id, d.stamp, d.patches.len())).collect();
+    println!("{out}: epoch {} rebase {} datasets {}", m.epoch, m.rebase, list.join(", "));
     // For scripts: names that belong in data-latest (full files) and in the run's release (patches).
     println!("latest: {}", current_files(&m).join(" "));
     println!("run: {}", run_files(&m).join(" "));
