@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One day of prices: fetch MTGJSON AllPricesToday -> compile against the latest card release -> delta -> verify.
 #   scripts/daily-prices.sh [workdir]        (default data/prices; card releases from data/daily/releases)
-# Layout: <workdir>/raw/AllPricesToday.json, idmap.coqm, releases/prices-YYYYMMDD.coqr, patches/<old>-to-<new>.coqx
+# Layout: <workdir>/raw/AllPricesToday.json, idmap.coqm, releases/prices-YYYYMMDD.coqd, patches/<old>-to-<new>.coqp
 # The uuid map (AllIdentifiers, large) is fetched only when missing, or when more than UNMAPPED_MAX price
 # entries are unknown to it and it is older than a day. Env: COQC_USER_AGENT, UNMAPPED_MAX (default 50),
 # CARDS (card release to use, default the latest one).
@@ -28,17 +28,17 @@ fetch_idmap() {
 [ -f "$IDMAP" ] || fetch_idmap
 
 STAMP="$(grep -o '"date":"[0-9-]*"' "$RAW" | head -1 | tr -dc 0-9)"
-NEW="$WORK/releases/prices-$STAMP.coqr"
+NEW="$WORK/releases/prices-$STAMP.coqd"
 if [ -f "$NEW" ]; then echo "$NEW already exists (nothing new since $STAMP)"; exit 0; fi
 OUT="$("$BIN" prices "$RAW" --cards "$CARDS" --idmap "$IDMAP" -o "$NEW")"; echo "$OUT"
 UNM="$(printf '%s' "$OUT" | sed -n 's/.*unmapped uuids \([0-9]*\).*/\1/p')"
 if [ "${UNM:-0}" -gt "${UNMAPPED_MAX:-50}" ] && [ -n "$(find "$IDMAP" -mmin +1440 2>/dev/null)" ]; then
   fetch_idmap; "$BIN" prices "$RAW" --cards "$CARDS" --idmap "$IDMAP" -o "$NEW"
 fi
-PREV="$(ls -1 "$WORK"/releases/prices-*.coqr | sort | grep -v "$NEW" | tail -1 || true)"
+PREV="$(ls -1 "$WORK"/releases/prices-*.coqd | sort | grep -v "$NEW" | tail -1 || true)"
 if [ -n "$PREV" ]; then
-  PS="$(basename "$PREV" .coqr)"; PS="${PS#prices-}"
-  PATCH="$WORK/patches/$PS-to-$STAMP.coqx"
+  PS="$(basename "$PREV" .coqd)"; PS="${PS#prices-}"
+  PATCH="$WORK/patches/$PS-to-$STAMP.coqp"
   "$BIN" prices-patch "$PREV" "$NEW" -o "$PATCH"
   TMP="$(mktemp)"; trap 'rm -f "$TMP"' EXIT
   "$BIN" prices-apply "$PREV" "$PATCH" -o "$TMP" | tail -1

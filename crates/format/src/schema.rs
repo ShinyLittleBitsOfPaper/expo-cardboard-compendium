@@ -66,6 +66,9 @@ pub struct TableDef {
     pub rel: Rel,
     /// Natural-key column (must be `Uuid`); looked up by `getByKey` and kept stable across releases.
     pub key: Option<String>,
+    /// Stored and patched column by column instead of row by row (dense numeric tables such as price overlays).
+    /// Requires `rel == None`, no key, and only `Int` columns. Encoded as bit 7 of the relation tag, so files without it still read.
+    pub columnar: bool,
     pub columns: Vec<ColumnDef>,
 }
 
@@ -118,6 +121,9 @@ impl Schema {
                     _ => {}
                 }
             }
+            if t.columnar && (t.rel != Rel::None || t.key.is_some() || t.columns.iter().any(|c| c.ty != ColType::Int)) {
+                return Err(format!("{}: a columnar table must be a root table without key and with only Int columns", t.name));
+            }
             if t.columns.iter().filter(|c| c.ty == ColType::Bool).count() > 30 {
                 return Err(format!("{}: at most 30 Bool columns", t.name));
             }
@@ -146,14 +152,15 @@ impl Schema {
         w.uvarint(self.tables.len() as u64);
         for t in &self.tables {
             w.str(&t.name);
+            let col_bit = if t.columnar { 0x80 } else { 0 };
             match &t.rel {
-                Rel::None => w.u8(0),
+                Rel::None => w.u8(col_bit),
                 Rel::Parent(p) => {
-                    w.u8(1);
+                    w.u8(1 | col_bit);
                     w.str(p);
                 }
                 Rel::Sidecar(p) => {
-                    w.u8(2);
+                    w.u8(2 | col_bit);
                     w.str(p);
                 }
             }
@@ -204,7 +211,9 @@ impl Schema {
         let mut tables = Vec::with_capacity(n);
         for _ in 0..n {
             let name = r.string()?;
-            let rel = match r.u8()? {
+            let tag = r.u8()?;
+            let columnar = tag & 0x80 != 0;
+            let rel = match tag & 0x7f {
                 0 => Rel::None,
                 1 => Rel::Parent(r.string()?),
                 2 => Rel::Sidecar(r.string()?),
@@ -243,7 +252,7 @@ impl Schema {
                 }
                 columns.push(ColumnDef { name: cname, ty, index, aliases });
             }
-            tables.push(TableDef { name, rel, key, columns });
+            tables.push(TableDef { name, rel, key, columnar, columns });
         }
         Ok(Self { id, version, dicts, tables })
     }

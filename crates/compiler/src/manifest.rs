@@ -280,8 +280,8 @@ mod tests {
                 stamp: pstamp.into(),
                 format: 1,
                 min_reader: 1,
-                file: me(&format!("prices-{pstamp}.coqr")),
-                patch: Some(me(&format!("prices-{pprev}-to-{pstamp}.coqx"))),
+                file: me(&format!("prices-{pstamp}.coqd")),
+                patch: Some(me(&format!("prices-{pprev}-to-{pstamp}.coqp"))),
             },
         }
     }
@@ -289,9 +289,9 @@ mod tests {
     #[test]
     fn stamps_parse() {
         assert_eq!(patch_stamps("cards-A1-to-B2.coqp", "cards-"), Some(("A1".into(), "B2".into())));
-        assert_eq!(patch_stamps("prices-20261024-to-20261027.coqx", "prices-"), Some(("20261024".into(), "20261027".into())));
+        assert_eq!(patch_stamps("prices-20261024-to-20261027.coqp", "prices-"), Some(("20261024".into(), "20261027".into())));
         assert_eq!(patch_stamps("cards-A1.coqp", "cards-"), None);
-        assert_eq!(patch_stamps("prices-A-to-B.coqx", "cards-"), None);
+        assert_eq!(patch_stamps("prices-A-to-B.coqp", "cards-"), None);
     }
 
     #[test]
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(m2.prices.patches.len(), 1);
         let m3 = build(&inputs("S3", "S2", "P3", "P2", "26", 1), Some(&m2)).unwrap();
         assert_eq!(m3.cards.patches.iter().map(|x| (x.from.as_str(), x.to.as_str())).collect::<Vec<_>>(), [("S1", "S2"), ("S2", "S3")]);
-        assert_eq!(run_files(&m3), ["cards-S2-to-S3.coqp", "cards-S2-to-S3.coqid", "prices-P2-to-P3.coqx"]);
+        assert_eq!(run_files(&m3), ["cards-S2-to-S3.coqp", "cards-S2-to-S3.coqid", "prices-P2-to-P3.coqp"]);
         // Links older than keep_since fall out of the window.
         let mut late = inputs("S4", "S3", "P4", "P3", "26", 1);
         late.keep_since = "2026-10-26T00:00:00Z".into();

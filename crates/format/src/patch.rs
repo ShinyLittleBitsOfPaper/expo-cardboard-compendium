@@ -4,6 +4,9 @@
 //! per table, every row that is new or whose encoded bytes changed. Applying it rebuilds the target store and writes it with the
 //! same deterministic writer, so the result must hash to the target's SHA-256; if it does not (for example a different zstd
 //! build), the client should fall back to the full file.
+//!
+//! Per table one mode byte: 0 = row list (above), 1 = columnar delta for `TableDef::columnar` tables: the tombstone flags and then
+//! every column as `rows` zigzag varints of (new cell code - old cell code), rows past the old table counting as absent (code 0).
 
 use crate::codec::{Reader, Writer};
 use crate::coqd::{decode_meta, decode_row, encode_meta, read_store, row_bytes, write_store};
@@ -13,6 +16,26 @@ use sha2::{Digest, Sha256};
 const MAGIC: &[u8; 4] = b"COQP";
 const VERSION: u16 = 2;
 const LEVEL: i32 = 19;
+
+fn zz(v: i64) -> u64 {
+    ((v << 1) ^ (v >> 63)) as u64
+}
+fn unzz(v: u64) -> i64 {
+    (v >> 1) as i64 ^ -((v & 1) as i64)
+}
+/// Cell code of an Int cell: 0 = absent, else zigzag + 1 (wrapping, so every i64 round-trips through modular arithmetic).
+fn code(x: Option<i64>) -> i64 {
+    x.map_or(0, |x| zz(x).wrapping_add(1) as i64)
+}
+fn uncode(c: i64) -> Option<i64> {
+    (c != 0).then(|| unzz((c as u64).wrapping_sub(1)))
+}
+fn int_col(t: &Table, c: usize) -> &Vec<Option<i64>> {
+    match &t.cols[c] {
+        ColData::Int(v) => v,
+        _ => unreachable!("columnar tables only hold Int columns (Schema::validate)"),
+    }
+}
 
 fn sha(b: &[u8]) -> [u8; 32] {
     Sha256::digest(b).into()
@@ -56,6 +79,28 @@ pub fn make_patch(old_bytes: &[u8], new_bytes: &[u8]) -> Result<(Vec<u8>, PatchI
     w.bytes(&m.buf);
     let mut info = PatchInfo::default();
     for ((def, o), n) in new.schema.tables.iter().zip(&old.tables).zip(&new.tables) {
+        if def.columnar {
+            w.u8(1);
+            let (mut changed, appended) = (0u64, (n.rows() - o.rows()) as u64);
+            let stream = |old: &dyn Fn(usize) -> i64, new: &dyn Fn(usize) -> i64, w: &mut Writer, changed: &mut u64| {
+                for i in 0..n.rows() {
+                    let d = new(i).wrapping_sub(old(i));
+                    if d != 0 && i < o.rows() {
+                        *changed += 1;
+                    }
+                    w.uvarint(zz(d));
+                }
+            };
+            stream(&|i| o.tomb.get(i).copied().unwrap_or(false) as i64, &|i| n.tomb[i] as i64, &mut w, &mut changed);
+            for c in 0..def.columns.len() {
+                let (ov, nv) = (int_col(o, c), int_col(n, c));
+                stream(&|i| ov.get(i).map_or(0, |x| code(*x)), &|i| code(nv[i]), &mut w, &mut changed);
+            }
+            // for a columnar table `changed` counts changed cells (all columns), `appended` rows
+            info.tables.push((def.name.clone(), changed, appended));
+            continue;
+        }
+        w.u8(0);
         let (mut changed, mut appended) = (0u64, 0u64);
         let mut list: Vec<(u32, Vec<u8>)> = Vec::new();
         for i in 0..n.rows() {
@@ -109,6 +154,7 @@ pub fn apply_patch(old_bytes: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
     let mut st = read_store(old_bytes).map_err(e)?;
     let mlen = r.uvarint().map_err(e)? as usize;
     let meta = decode_meta(&st.schema, &mut Reader::new(r.take(mlen).map_err(e)?)).map_err(e)?;
+    let old_rows: Vec<usize> = st.tables.iter().map(|t| t.rows()).collect();
     // rows not supplied by the patch stay unchanged; new rows start as zero-key tombstone placeholders
     for (t, n) in st.tables.iter_mut().zip(&meta.counts) {
         while t.rows() < *n as usize {
@@ -117,6 +163,29 @@ pub fn apply_patch(old_bytes: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
     }
     for ti in 0..st.tables.len() {
         let def = st.schema.tables[ti].clone();
+        let mode = r.u8().map_err(e)?;
+        if (mode == 1) != def.columnar || mode > 1 {
+            return Err(format!("{}: bad patch mode", def.name));
+        }
+        if mode == 1 {
+            let n = st.tables[ti].rows();
+            let o = old_rows[ti];
+            let mut t = Table::new(&def);
+            for i in 0..n {
+                let old = if i < o { st.tables[ti].tomb[i] as i64 } else { 0 };
+                t.tomb.push(old.wrapping_add(unzz(r.uvarint().map_err(e)?)) != 0);
+            }
+            for c in 0..def.columns.len() {
+                let mut v = Vec::with_capacity(n);
+                for i in 0..n {
+                    let old = if i < o { code(int_col(&st.tables[ti], c)[i]) } else { 0 };
+                    v.push(uncode(old.wrapping_add(unzz(r.uvarint().map_err(e)?))));
+                }
+                t.cols[c] = ColData::Int(v);
+            }
+            st.tables[ti] = t;
+            continue;
+        }
         let n = r.uvarint().map_err(e)?;
         for _ in 0..n {
             let row = r.u32().map_err(e)? as usize;

@@ -47,8 +47,8 @@ fi
 scripts/daily.sh
 scripts/daily-prices.sh
 
-CARDS="$(ls -1 data/daily/releases/cards-*.coqd | sort | tail -1)"; PRICES="$(ls -1 data/prices/releases/prices-*.coqr | sort | tail -1)"
-CS="$(basename "$CARDS" .coqd)"; CS="${CS#cards-}"; PS="$(basename "$PRICES" .coqr)"; PS="${PS#prices-}"
+CARDS="$(ls -1 data/daily/releases/cards-*.coqd | sort | tail -1)"; PRICES="$(ls -1 data/prices/releases/prices-*.coqd | sort | tail -1)"
+CS="$(basename "$CARDS" .coqd)"; CS="${CS#cards-}"; PS="$(basename "$PRICES" .coqd)"; PS="${PS#prices-}"
 if [ "$CS" = "$PSTAMP" ] && [ "$PS" = "$PPRICE" ]; then
   echo "nothing new (cards $CS, prices $PS)"; touch "$STAGE/NOTHING"; exit 0
 fi
@@ -66,11 +66,11 @@ if [ -n "$PSTAMP" ] && [ "$CS" != "$PSTAMP" ]; then
   ARGS+=(--cards-patch "$STAGE/cards-$PSTAMP-to-$CS.coqp" --index-delta "$STAGE/cards-$PSTAMP-to-$CS.coqid")
 fi
 if [ -n "$PPRICE" ] && [ "$PS" != "$PPRICE" ]; then
-  cp "data/prices/patches/$PPRICE-to-$PS.coqx" "$STAGE/prices-$PPRICE-to-$PS.coqx"
-  ARGS+=(--prices-patch "$STAGE/prices-$PPRICE-to-$PS.coqx")
+  cp "data/prices/patches/$PPRICE-to-$PS.coqp" "$STAGE/prices-$PPRICE-to-$PS.coqp"
+  ARGS+=(--prices-patch "$STAGE/prices-$PPRICE-to-$PS.coqp")
 fi
 [ -f "$PREVM" ] && ARGS+=(--prev "$PREVM")
 [ "${REBASE:-0}" = 1 ] && ARGS+=(--rebase)
-"$BIN" manifest --cards "$STAGE/cards-$CS.coqd" --index "$STAGE/cards-$CS.coqi.zst" --prices "$STAGE/prices-$PS.coqr" \
+"$BIN" manifest --cards "$STAGE/cards-$CS.coqd" --index "$STAGE/cards-$CS.coqi.zst" --prices "$STAGE/prices-$PS.coqd" \
   --repo "$REPO" --run "data-$(date -u +%Y%m%d%H%M)" --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --keep-since "$(date -u -d "$RETAIN_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)" "${ARGS[@]}" -o "$STAGE/manifest.json" | tee "$STAGE/assets.txt"

@@ -58,7 +58,13 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
     index them; it happens when the index is rebuilt over `Store` in S3. Docs rewrite for v3 goes with it.
 - **S3 Generic index and query engine** (coqs v2) with dialect hooks; MTG dialect reproduces today's results exactly.
   Detailed design and stage split (S3a-S3d) in `docs/s3-design.md` (0.0.2-16). **S3a done 0.0.2-18** (generic `gindex` + MTG derive/hooks/translate, cross-checked against the old index).
-- **S4 Overlays, manifest v2, sync and TS API generalised.**
+- **S4 Overlays, manifest v2, sync and TS API generalised.** Split (proposed 0.0.2-24):
+  - **S4a (done 0.0.2-24):** price overlay = ordinary `.coqd` (schema `mtg-prices`, columnar table) + `.coqp`; `.coqr`/`.coqx` and
+    `format/src/prices.rs` deleted; columnar table layout + column-delta patch mode added to COQD/COQP; scripts, docs, CLI renamed.
+  - **S4b:** manifest v2 (list of datasets with roles base/index/overlay, `min_client_format` per dataset instead of fixed `coqd/coqi/coqr`),
+    `coqc manifest` and `data-*.sh` over it.
+  - **S4c:** module TS sync over manifest v2 (generic apply of `.coqp` incl. overlays; engine `applyPatch` for any dataset), engine attaches an
+    overlay to its base (price predicates in search), generic `getRecords`/`getByKey`, MTG wrappers thin.
 - **S5 Proof: a second, non-MTG schema** (a small synthetic dataset) compiled, searched, patched, published offline and synced
   end to end.
 

@@ -56,7 +56,7 @@ See `docs/roadmap.md` for what is planned next (data pipeline, client sync, engi
 - `crates/mtg`: `coqc-mtg` (the Magic dialect: record types `types.rs` (`Dataset`, the ingestion working shape), `tables.rs` (schema + Store bridge), index columns/predicates `gindex.rs`, query tree `query.rs`, Scryfall ingestion `ingest.rs`, MTGJSON price ingestion `prices.rs`, Scryfall query syntax `parse.rs`, card JSON `json.rs`, `synth.rs`)
 - `crates/compiler`: `coqc` (library + CLI)
 - `crates/format/src/{gindex,search,coqi}.rs`: generic index evaluator, text-index primitives, `.coqi` serialization + deltas (docs/search.md)
-- `crates/format/src/prices.rs`, `crates/mtg/src/prices.rs`: price dataset (docs/prices.md); `scripts/daily-prices.sh`
+- `crates/mtg/src/prices.rs`: price overlay (a columnar `.coqd`) (docs/prices.md); `scripts/daily-prices.sh`
 - `scripts/fetch-bulk.sh`: bulk download with Scryfall-friendly headers; skips when updated_at is unchanged
 - `docs/format.md`: file format spec; `docs/phase0.md`: findings, open questions, next steps
 

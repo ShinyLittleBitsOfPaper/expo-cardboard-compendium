@@ -21,6 +21,7 @@ pub fn mtg_schema() -> Schema {
                 name: "oracle".into(),
                 rel: Rel::None,
                 key: Some("oracle_id".into()),
+                columnar: false,
                 columns: vec![
                     C::new("oracle_id", T::Uuid, I::Exact, &[]),
                     C::new("name", T::Str, I::Text, &["n"]),
@@ -38,12 +39,14 @@ pub fn mtg_schema() -> Schema {
                 name: "oracle_ranks".into(),
                 rel: Rel::Sidecar("oracle".into()),
                 key: None,
+                columnar: false,
                 columns: vec![C::new("edhrec", T::Int, I::Range, &[]), C::new("penny", T::Int, I::Range, &[])],
             },
             TableDef {
                 name: "printing".into(),
                 rel: Rel::Parent("oracle".into()),
                 key: Some("scryfall_id".into()),
+                columnar: false,
                 columns: vec![
                     C::new("scryfall_id", T::Uuid, I::Exact, &["id"]),
                     C::new("oracle_row", T::Ref("oracle".into()), I::None, &[]),

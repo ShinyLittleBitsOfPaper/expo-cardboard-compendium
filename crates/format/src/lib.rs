@@ -7,7 +7,6 @@ pub mod dialect;
 pub mod dict;
 pub mod gindex;
 pub mod patch;
-pub mod prices;
 pub mod schema;
 pub mod search;
 pub mod table;

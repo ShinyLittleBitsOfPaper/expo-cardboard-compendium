@@ -1,15 +1,93 @@
-//! MTGJSON prices -> COQR. v1 scope: retail only, TCGplayer (USD) and Cardmarket (EUR), paper.
+//! MTGJSON prices -> a `.coqd` overlay (S4a: no separate price format any more). v1 scope: retail only, TCGplayer (USD) and Cardmarket (EUR), paper.
 //! MTGJSON price entries are keyed by MTGJSON uuid; `AllIdentifiers` maps uuid -> `identifiers.scryfallId`.
 //! The id map is cached (COQM file) and rebuilt only when the prices file has uuids it does not know.
 
 use coqc_format::codec::{Error, Reader, Writer};
+use coqc_format::coqd::{read_store, write_store};
+use coqc_format::schema::{ColType, ColumnDef, IndexKind, Rel, Schema, TableDef};
+use coqc_format::table::{ColData, Store, Table};
 use crate::json::parse_uuid;
-use coqc_format::prices::PriceTable;
 use crate::types::Dataset;
 use serde::Deserialize;
 use std::collections::HashMap;
 
 type Id = [u8; 16];
+
+
+// ----------------------------------------------------------------- overlay ---
+
+pub const COLUMNS: [&str; 6] = ["tcg_normal", "tcg_foil", "tcg_etched", "cm_normal", "cm_foil", "cm_etched"];
+/// Schema id of the price overlay.
+pub const SCHEMA_ID: &str = "mtg-prices";
+/// Store prop naming the table of the base dataset whose rows the overlay's rows follow (row i = row i).
+pub const PROP_OVERLAY_OF: &str = "overlay_of";
+
+/// The price overlay's schema: one table `price`, one nullable Int column per provider x finish holding cents (None = no price).
+pub fn price_schema() -> Schema {
+    Schema {
+        id: SCHEMA_ID.into(),
+        version: 1,
+        dicts: vec![],
+        tables: vec![TableDef {
+            name: "price".into(),
+            rel: Rel::None,
+            key: None,
+            columnar: true,
+            columns: COLUMNS.iter().map(|c| ColumnDef::new(c, ColType::Int, IndexKind::Range, &[])).collect(),
+        }],
+    }
+}
+
+/// In-memory price table: rows are PRINTING rows of the card file of the same epoch; a value is 0 = absent, else cents + 1.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PriceTable {
+    pub cards_epoch: u32,
+    pub date: u32,
+    pub cols: [Vec<u32>; 6],
+}
+
+impl PriceTable {
+    pub fn new(cards_epoch: u32, date: u32, rows: usize) -> Self {
+        Self { cards_epoch, date, cols: std::array::from_fn(|_| vec![0; rows]) }
+    }
+    pub fn rows(&self) -> usize {
+        self.cols[0].len()
+    }
+    /// cents for (row, column), None = absent
+    pub fn cents(&self, row: usize, col: usize) -> Option<u32> {
+        self.cols[col].get(row).copied().filter(|v| *v != 0).map(|v| v - 1)
+    }
+    pub fn to_store(&self) -> Store {
+        let mut st = Store::new(price_schema());
+        st.epoch = self.cards_epoch;
+        st.source_date = self.date;
+        st.props = vec![(PROP_OVERLAY_OF.into(), vec!["printing".into()])];
+        let t: &mut Table = &mut st.tables[0];
+        t.tomb = vec![false; self.rows()];
+        t.cols = self.cols.iter().map(|c| ColData::Int(c.iter().map(|&v| (v != 0).then(|| v as i64 - 1)).collect())).collect();
+        st
+    }
+    pub fn from_store(st: &Store) -> Result<Self, Error> {
+        if st.schema != price_schema() {
+            return Err(Error::Corrupt("not a price overlay"));
+        }
+        let t = &st.tables[0];
+        let mut p = PriceTable::new(st.epoch, st.source_date, t.rows());
+        for (c, d) in t.cols.iter().enumerate() {
+            let ColData::Int(v) = d else { return Err(Error::Corrupt("bad price column")) };
+            for (i, x) in v.iter().enumerate() {
+                p.cols[c][i] = x.map_or(0, |x| x as u32 + 1);
+            }
+        }
+        Ok(p)
+    }
+    pub fn encode(&self) -> Result<Vec<u8>, Error> {
+        Ok(write_store(&self.to_store())?.0)
+    }
+    pub fn decode(b: &[u8]) -> Result<Self, Error> {
+        Self::from_store(&read_store(b)?)
+    }
+}
 
 // ------------------------------------------------------------------ id map ---
 

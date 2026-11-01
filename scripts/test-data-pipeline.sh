@@ -27,18 +27,18 @@ for i in 0 1 2 3; do
   "$BIN" verify "$W/cards-$S.coqd" "$W/raw.jsonl" >/dev/null
   "$BIN" index-build "$W/cards-$S.coqd" -o "$W/cards-$S.coqi" >/dev/null
   "$BIN" zst "$W/cards-$S.coqi" -o "$W/cards-$S.coqi.zst" --level 3 >/dev/null
-  printf 'COQR\001\000\001\000day%s' "$d" > "$W/prices-$PS.coqr"
+  printf 'COQD\003\000\003\000day%s' "$d" > "$W/prices-$PS.coqd"
   ARGS=()
   if [ -n "$PREV" ]; then
     P="$(basename "$PREV" .coqd)"; P="${P#cards-}"
     "$BIN" patch "$PREV" "$W/cards-$S.coqd" -o "$W/cards-$P-to-$S.coqp" >/dev/null
     "$BIN" index-diff "${PREV%.coqd}.coqi" "$W/cards-$S.coqi" -o "$W/cards-$P-to-$S.coqid" >/dev/null
-    printf 'COQXpatch%s' "$d" > "$W/prices-$PPREV-to-$PS.coqx"
-    ARGS+=(--cards-patch "$W/cards-$P-to-$S.coqp" --index-delta "$W/cards-$P-to-$S.coqid" --prices-patch "$W/prices-$PPREV-to-$PS.coqx")
+    printf 'COQPpatch%s' "$d" > "$W/prices-$PPREV-to-$PS.coqp"
+    ARGS+=(--cards-patch "$W/cards-$P-to-$S.coqp" --index-delta "$W/cards-$P-to-$S.coqid" --prices-patch "$W/prices-$PPREV-to-$PS.coqp")
   fi
   [ -f "$T/gh/data-latest/manifest.json" ] && ARGS+=(--prev "$T/gh/data-latest/manifest.json")
   RUNTAG="data-${at//-/}2200"
-  "$BIN" manifest --cards "$W/cards-$S.coqd" --index "$W/cards-$S.coqi.zst" --prices "$W/prices-$PS.coqr" --repo o/r \
+  "$BIN" manifest --cards "$W/cards-$S.coqd" --index "$W/cards-$S.coqi.zst" --prices "$W/prices-$PS.coqd" --repo o/r \
     --run "$RUNTAG" --at "${at}T22:00:00Z" --keep-since "$(date -u -d "$at - 30 days" +%Y-%m-%dT%H:%M:%SZ)" "${ARGS[@]}" \
     -o "$W/manifest.json" | tee "$W/assets.txt" >/dev/null
   # publish: dry run must not touch anything, the real one must
@@ -48,7 +48,7 @@ for i in 0 1 2 3; do
   PREV="$W/cards-$S.coqd"; PPREV="$PS"
   # data-latest holds exactly the current full files + the manifest
   got="$(ls "$T/gh/data-latest" | sort | tr '\n' ' ')"
-  want="$(echo "cards-$S.coqd cards-$S.coqi.zst manifest.json prices-$PS.coqr" | tr ' ' '\n' | sort | tr '\n' ' ')"
+  want="$(echo "cards-$S.coqd cards-$S.coqi.zst manifest.json prices-$PS.coqd" | tr ' ' '\n' | sort | tr '\n' ' ')"
   [ "$got" = "$want" ] || fail "day $d data-latest: [$got] want [$want]"
   [ "$(sha "$T/gh/data-latest/cards-$S.coqd")" = "$(jq -r .cards.file.sha256 "$T/gh/data-latest/manifest.json")" ] || fail "manifest hash"
   echo "day $d ok ($(jq -c '[.rebase,(.cards.patches|length),(.prices.patches|length)]' "$T/gh/data-latest/manifest.json") rebase,cards chain,prices chain)"

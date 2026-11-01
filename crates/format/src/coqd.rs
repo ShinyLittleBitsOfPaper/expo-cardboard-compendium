@@ -13,6 +13,10 @@
 //! zstd-compressed blocks (`off` relative to the data area). A raw block is a run of `varint(len) + row bytes`. Row N lives in block
 //! N / rows_per_block, so appending rows only touches tail blocks and an unchanged block keeps its hash.
 //!
+//! Columnar tables (`TableDef::columnar`, Int columns only) replace the row blocks by one section: `u32 rows | u32 raw_len | zstd(raw)`,
+//! raw = one tombstone byte per row, then every column as `rows` varints of `0 | zigzag+1` (same cell code as a row). Dense numeric
+//! tables compress far better this way and a daily change touches few bytes of the column stream.
+//!
 //! Row bytes (schema driven): `varint flags` (bit 0 tombstone, then 2 bits per Bool column in column order: 0 absent, 1 false,
 //! 2 true), then every non-Bool column in order. A tombstoned row carries only its key column (if the table has one).
 //! Str/Json `opt_str`; Int `varint(0 | zigzag+1)`; Float `u8 tag [+ u64 bits]`; Uuid 16 bytes; Enum `opt_id`; Set `varint(0 | len+1)`
@@ -301,6 +305,45 @@ fn key_section(def: &TableDef, t: &Table) -> Option<Vec<u8>> {
     Some(w.buf)
 }
 
+fn encode_columnar(t: &Table) -> Result<Vec<u8>> {
+    let mut raw = Writer::new();
+    t.tomb.iter().for_each(|d| raw.u8(*d as u8));
+    for c in &t.cols {
+        let ColData::Int(v) = c else { return Err(Error::Corrupt("columnar table with a non-Int column")) };
+        v.iter().for_each(|x| raw.uvarint(x.map_or(0, |x| zigzag(x).wrapping_add(1))));
+    }
+    let z = zstd_compress(&raw.buf)?;
+    let mut out = Writer::new();
+    out.u32(t.rows() as u32);
+    out.u32(raw.buf.len() as u32);
+    out.bytes(&z);
+    Ok(out.buf)
+}
+
+fn decode_columnar(def: &TableDef, sec: &[u8], count: usize) -> Result<Table> {
+    let mut r = Reader::new(sec);
+    let (n, rawlen) = (r.u32()? as usize, r.u32()? as usize);
+    if n != count {
+        return Err(Error::Corrupt("row count mismatch"));
+    }
+    let raw = zstd::bulk::decompress(&sec[8..], rawlen).map_err(|e| Error::Zstd(e.to_string()))?;
+    let mut br = Reader::new(&raw);
+    let mut t = Table::new(def);
+    for _ in 0..n {
+        t.tomb.push(br.u8()? != 0);
+    }
+    for c in t.cols.iter_mut() {
+        let ColData::Int(v) = c else { return Err(Error::Corrupt("columnar table with a non-Int column")) };
+        for _ in 0..n {
+            v.push(match br.uvarint()? {
+                0 => None,
+                x => Some(unzigzag(x.wrapping_sub(1))),
+            });
+        }
+    }
+    Ok(t)
+}
+
 pub fn write_store(st: &Store) -> Result<(Vec<u8>, Vec<SectionStat>)> {
     st.check().map_err(|_| Error::Corrupt("inconsistent store"))?;
     let mut schema = Writer::new();
@@ -311,7 +354,13 @@ pub fn write_store(st: &Store) -> Result<(Vec<u8>, Vec<SectionStat>)> {
     let mut stats = vec![];
     let mut sections: Vec<(u32, u32, Vec<u8>)> = vec![(K_SCHEMA, 0, schema.buf), (K_META, 0, meta.buf)];
     for (i, (def, t)) in st.schema.tables.iter().zip(&st.tables).enumerate() {
-        let (bytes, raw, blocks) = encode_blocks(def, t)?;
+        let (bytes, raw, blocks) = if def.columnar {
+            let b = encode_columnar(t)?;
+            let n = b.len() as u64;
+            (b, n, 1)
+        } else {
+            encode_blocks(def, t)?
+        };
         stats.push(SectionStat { name: def.name.clone(), raw_bytes: raw, stored_bytes: bytes.len() as u64, blocks });
         sections.push((K_ROWS, i as u32, bytes));
         if let Some(k) = key_section(def, t) {
@@ -400,6 +449,9 @@ pub fn block_table(bytes: &[u8], table: &str) -> Result<Vec<BlockInfo>> {
     let p = parse(bytes)?;
     let schema = p.schema()?;
     let ti = schema.table(table).ok_or(Error::Corrupt("unknown table"))?;
+    if schema.tables[ti].columnar {
+        return Err(Error::Corrupt("columnar table has no row blocks"));
+    }
     let mut r = Reader::new(p.rows(ti as u32)?);
     let _per = r.u32()?;
     let n = r.u32()? as usize;
@@ -451,7 +503,9 @@ pub fn read_store(bytes: &[u8]) -> Result<Store> {
     let m = decode_meta(&schema, &mut Reader::new(p.section(K_META, 0)?))?;
     let mut tables = Vec::with_capacity(schema.tables.len());
     for (i, def) in schema.tables.iter().enumerate() {
-        tables.push(decode_blocks(def, p.rows(i as u32)?, m.counts[i] as usize)?);
+        let sec = p.rows(i as u32)?;
+        let count = m.counts[i] as usize;
+        tables.push(if def.columnar { decode_columnar(def, sec, count)? } else { decode_blocks(def, sec, count)? });
     }
     let st = Store { schema, epoch: m.epoch, source_date: m.source_date, dicts: m.dicts, props: m.props, tables };
     st.check().map_err(|_| Error::Corrupt("inconsistent store"))?;

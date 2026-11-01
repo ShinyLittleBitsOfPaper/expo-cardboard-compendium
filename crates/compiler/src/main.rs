@@ -27,14 +27,14 @@ USAGE:
   coqc index-diff  <old> <new> [-o <delta.coqid>]  index delta between two releases (.coqd or .coqi); replay-verified
   coqc index-apply <old.coqi> <delta.coqid> -o <new.coqi>   replay a delta (hash-verified)
   coqc idmap   <AllIdentifiers.json> -o <idmap.coqm>   MTGJSON uuid -> Scryfall id map (refresh rarely)
-  coqc prices  <AllPricesToday.json> --cards <cards.coqd> --idmap <idmap.coqm> -o <prices.coqr>
-  coqc prices-patch <old.coqr> <new.coqr> -o <p.coqx>  /  coqc prices-apply <old.coqr> <p.coqx> -o <new.coqr>
-  coqc price   <prices.coqr> <cards.coqd> <card name>  show stored prices of every printing of a card
+  coqc prices  <AllPricesToday.json> --cards <cards.coqd> --idmap <idmap.coqm> -o <prices.coqd>
+  coqc prices-patch <old.coqd> <new.coqd> -o <p.coqp>  /  coqc prices-apply <old.coqd> <p.coqp> -o <new.coqd>
+  coqc price   <prices.coqd> <cards.coqd> <card name>  show stored prices of every printing of a card
   coqc zst     <in> -o <out> [--level N]           zstd-compress a file (the published index is .coqi.zst, level 19)
   coqc unzst   <in.zst> -o <out>                   decompress it
-  coqc manifest --cards <c.coqd> --index <c.coqi.zst> --prices <p.coqr> --run <data-tag> --at <ISO UTC> --keep-since <ISO UTC>
+  coqc manifest --cards <c.coqd> --index <c.coqi.zst> --prices <p.coqd> --run <data-tag> --at <ISO UTC> --keep-since <ISO UTC>
                [--repo OWNER/REPO | --base-url URL] [--prev manifest.json] [--cards-patch f.coqp --index-delta f.coqid]
-               [--prices-patch f.coqx] [--rebase] -o manifest.json     (see docs/roadmap.md, Milestone 1)
+               [--prices-patch f.coqp] [--rebase] -o manifest.json     (see docs/roadmap.md, Milestone 1)
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
 
@@ -479,7 +479,7 @@ fn cmd_idmap(args: &[String]) {
 }
 
 fn cmd_prices(args: &[String]) {
-    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <prices.coqr>"));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <prices.coqd>"));
     let cards = flag_value(args, "--cards").unwrap_or_else(|| die("missing --cards"));
     let idm = flag_value(args, "--idmap").unwrap_or_else(|| die("missing --idmap"));
     let t0 = Instant::now();
@@ -490,38 +490,38 @@ fn cmd_prices(args: &[String]) {
     std::fs::write(&out, &b).unwrap_or_else(|e| die(&e.to_string()));
     println!("date {}  entries {}  unmapped uuids {}  not in cards file {}  conflicts {}", r.date, r.entries, r.unmapped, r.not_in_cards, r.conflicts);
     println!("rows priced {} of {}", r.rows_priced, t.rows());
-    for (n, c) in coqc_format::prices::COLUMNS.iter().zip(r.per_column) {
+    for (n, c) in coqc::prices::COLUMNS.iter().zip(r.per_column) {
         println!("  {n:<11} {c}");
     }
     println!("prices {out}: {} ({:.1}s)", mb(b.len() as u64), t0.elapsed().as_secs_f64());
 }
 
 fn cmd_prices_patch(args: &[String]) {
-    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <p.coqx>"));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <p.coqp>"));
     if args.len() < 2 {
-        die("usage: coqc prices-patch <old.coqr> <new.coqr> -o <p.coqx>");
+        die("usage: coqc prices-patch <old.coqd> <new.coqd> -o <p.coqp>");
     }
     let (a, b) = (rd(&args[0]), rd(&args[1]));
-    let p = coqc_format::prices::make_delta(&a, &b).unwrap_or_else(|e| die(&e.to_string()));
+    let (p, _) = coqc_format::patch::make_patch(&a, &b).unwrap_or_else(|e| die(&e));
     std::fs::write(&out, &p).unwrap_or_else(|e| die(&e.to_string()));
     println!("price delta {out}: {} vs full file {}", mb(p.len() as u64), mb(b.len() as u64));
 }
 
 fn cmd_prices_apply(args: &[String]) {
-    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <new.coqr>"));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <new.coqd>"));
     if args.len() < 2 {
-        die("usage: coqc prices-apply <old.coqr> <p.coqx> -o <new.coqr>");
+        die("usage: coqc prices-apply <old.coqd> <p.coqp> -o <new.coqd>");
     }
-    let n = coqc_format::prices::apply_delta(&rd(&args[0]), &rd(&args[1])).unwrap_or_else(|e| die(&e.to_string()));
+    let n = coqc_format::patch::apply_patch(&rd(&args[0]), &rd(&args[1])).unwrap_or_else(|e| die(&e));
     std::fs::write(&out, &n).unwrap_or_else(|e| die(&e.to_string()));
     println!("applied: {out} ({}), hash verified", mb(n.len() as u64));
 }
 
 fn cmd_price(args: &[String]) {
     if args.len() < 3 {
-        die("usage: coqc price <prices.coqr> <cards.coqd> <card name>");
+        die("usage: coqc price <prices.coqd> <cards.coqd> <card name>");
     }
-    let t = coqc_format::prices::PriceTable::decode(&rd(&args[0])).unwrap_or_else(|e| die(&e.to_string()));
+    let t = coqc::prices::PriceTable::decode(&rd(&args[0])).unwrap_or_else(|e| die(&e.to_string()));
     let (_, ds) = load(Path::new(&args[1]));
     let want = args[2..].join(" ").to_lowercase();
     println!("prices dated {}", t.date);
@@ -594,8 +594,8 @@ fn cmd_manifest(args: &[String]) {
         die(&format!("{index_p}: built from a different dataset than {cards_p}"));
     }
     let pb = rd(&prices_p);
-    if pb.get(..4) != Some(b"COQR") {
-        die(&format!("{prices_p}: not a .coqr"));
+    if pb.get(..4) != Some(b"COQD") {
+        die(&format!("{prices_p}: not a .coqd price overlay"));
     }
     let measure_opt = |f: &str| flag_value(args, f).map(|p| measure(&p));
     let cards_patch = measure_opt("--cards-patch").map(|p| (p, measure_opt("--index-delta")));
