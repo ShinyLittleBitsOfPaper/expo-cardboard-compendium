@@ -1,74 +1,71 @@
-# Search (derived index + query plan)
+# Search (generic index + MTG dialect)
 
-Code: `crates/format/src/search.rs` (shared by compiler CLI and the future Rust engine).
-CLI: `coqc search <file> <query> [--plan JSON] [--cards] [--limit N] [--offset N]`, `coqc index-stats <file>`.
-Parser: `crates/mtg/src/parse.rs` (`parse(&str) -> Query`, Scryfall syntax). `crates/mtg/src/quick.rs` is a thin wrapper (drops sort/unique) used by the CLI.
+Code: `crates/format/src/gindex.rs` (generic evaluator over a `Store`), `crates/format/src/search.rs` (folding, bitsets, trigram
+postings), `crates/format/src/coqi.rs` (`.coqi` file + deltas), `crates/mtg/src/{parse,query,gindex}.rs` (Scryfall syntax, derived
+columns, `Custom` predicates, translation to the generic query). Shared by the compiler CLI and the Rust engine.
+CLI: `coqc search <file> <query> [--plan GQUERY_JSON] [--cards] [--limit N] [--offset N]`, `coqc index-stats|index-build|index-diff|index-apply`.
+Parser: `crates/mtg/src/parse.rs` (`parse(&str) -> Query`, the Scryfall query tree); `gindex::translate(&Query) -> GQuery`.
 
-## Decisions
-- **The index is derived, never stored or patched.** Built from the records at load (and after a patch);
-  deterministic, so the file and patches stay small and there is one code path. Revisit only if
-  `index-stats` build time on a real phone is too slow (then cache the serialized form beside the file).
-- Everything is evaluated as **bitsets over printing rows**. Oracle predicates compute oracle matches and
-  expand to printings; `not` is relative to live (non-tombstone) printings.
-- Text is **folded** (lowercase, common Latin accents stripped, `æ/œ/ß` expanded, curly quotes/dashes
-  normalised) on both sides. Name, type line and oracle text cover all faces.
-- **Trigrams** (byte 3-grams, delta-varint postings) for names and oracle text. Type line scans (short).
-  Query: intersect postings smallest-first, then **verify** by substring on the folded text.
-  Needles under 3 bytes, or made only of stop-grams, scan all live rows.
-- **Size gate:** a gram in more than max(25% of rows, 8) rows is a stop-gram: not stored, never used to
-  narrow (`STOP_FRACTION`, `STOP_MIN`). Results are identical with any gate (tested with everything gated).
-- Colors/identity: WUBRG mask. Typed value, else `extra` (non-canonical order lives there), else (colors)
-  union of face colors, else colorless. Scryfall semantics: `:` and `>=` include; `=` exact; `<=` subset
-  (colorless matches); `<`/`>` strict; `!=`.
-- **Identity `:` = subset** (`id:wu` == `id<=wu`, colorless fits); `color` `:` stays superset (Scryfall). Parser expands named combos (`azorius`, `bant`...) to letters.
-- Mana value is `f64` (half mana works): `mv=0.5`. Rarity rank (Scryfall's list order): `common<uncommon<rare<special<mythic<bonus`.
-- Sort: default released desc, name, row. Fields: released, name, mv, rarity (each asc/desc). `unique:
-  cards` keeps the first printing of each oracle card in sort order. `offset`/`limit` page the sorted rows.
-  (Full sort of every match is ~30 ms for 100k hits on a laptop; use partial selection if the engine needs it.)
+## How it works
+- **Schema drives the index.** Column `IndexKind` (`Text`, `Exact`, `Set`, `Range`) says what a column gets; the dialect adds *derived*
+  columns (folded text, colour masks, numbers, flags) and `Custom` predicates (`IndexSpec`, `Hooks`). The MTG dialect also lists the
+  schema `Text` columns it never searches by name (`SKIP_AUTO`), so no folded copy or trigram table is built for them.
+- **The index is derived at compile time and shipped** as `.coqi` (below). The engine attaches it to the loaded `Store` with
+  `GIndex::with_parts` (cheap: liveness and parent maps only). A missing, foreign (other dataset hash) or mis-sized `.coqi` is rebuilt
+  with `GIndex::build_parts` and rewritten.
+- Queries are evaluated as **bitsets over primary-table rows** (MTG: printings). Oracle predicates compute oracle matches and lift them
+  through the printing's `Ref`; `not` is relative to live (non-tombstone) rows.
+- Text is **folded** (lowercase, common Latin accents stripped, `ae/oe/ss` expanded, curly quotes/dashes normalised) on both sides.
+  Name, type line and oracle text cover all faces.
+- **Trigrams** (byte 3-grams, delta-varint postings) for names and oracle text (`name_n`; `text` + `full_text` share one table). Type line
+  scans. Query: intersect postings smallest-first, then **verify** by substring on the folded text. Needles under 3 bytes, or made only of
+  stop-grams, scan all live rows. **Size gate:** a gram in more than max(25% of rows, 8) rows is a stop-gram (`STOP_FRACTION`,
+  `STOP_MIN`); results are identical with any gate (tested with everything gated).
+- Colours/identity: WUBRG mask. Typed value, else `extra` (non-canonical order lives there), else (colours) union of face colours, else
+  colourless. Scryfall semantics: `:` and `>=` include; `=` exact; `<=` subset (colourless matches); `<`/`>` strict; `!=`.
+  **Identity `:` = subset** (`id:wu` == `id<=wu`); colour `:` stays superset. The parser expands named combos (`azorius`, `bant`, ...).
+- Mana value is `f64` (half mana works). Rarity rank: `common<uncommon<rare<special<mythic<bonus` (a derived number today; a schema
+  `ordered` flag is future work).
+- Sort: default released desc, name, row. Fields: released, name, mv, rarity (asc/desc). `unique:cards` keeps the first printing of each
+  oracle card in sort order. `offset`/`limit` page the sorted rows.
+- **Regression oracle:** `crates/compiler/tests/golden/gindex-oracle.txt` holds, for ~120 queries x unique x prefer x include-extras on
+  four fixture variants plus 4000 synthetic cards, the total and an FNV hash of the ordered rows, recorded from the pre-S3 `SearchIndex`
+  before it was removed. `tests/gindex.rs` checks the fresh index and the serialise/reload round trip against it; any diff is a
+  behaviour change (regenerate only on purpose).
 
-## Plan JSON
-```json
-{"expr":{"and":[{"name":"bolt"},{"color":{"op":":","colors":"r"}},{"mv":{"op":"<=","value":2}},
-  {"not":{"type":"land"}}]},
- "sort":[{"field":"released","desc":true},{"field":"name"}],"unique":"cards","offset":0,"limit":60}
-```
-Leaves: `name`, `oracle`, `type` (substring), `nameexact` (`!"name"`: full name or one face), `color`/`identity` `{op,colors}` (letters `wubrg`, empty/`c` =
-colorless), `mv` `{op,value}`, `colorcount`/`identitycount` `{op,value}` (`c>=2`, `id=3`), `rarity` `{op,value}`, `set` (code), `cn` (collector number, exact).
-Ops: `: = != < <= > >=`. Combinators: `and`, `or`, `not`. `expr` omitted = all printings.
+## Generic query JSON (`GQuery`, `--plan`)
+`{"expr": <GExpr>, "sort": [...], "unique_parent": bool, "limit": N, "offset": N, "scope": [rows]}`. `GExpr`: `all`, `none`, `and`, `or`,
+`not`, `text {field, needle}` (needle pre-folded), `cmp {field, op, val}` with `val` = `num | mask | str`, `custom {name, args}`.
+Ops: `: = != < <= > >=`. A schema column works without dialect help (`text` on a `Text` column, `cmp` on a numeric one).
 
-## Not done yet
-`cn` ranges, `lang`, `finish`, legality (`f:`), `is:`/`o:~`, regex, price predicates, set-scoped queries
-(`registerSet`), cursors. Real-data sizes/timings: run `coqc index-stats` on the real file (synthetic text
-is not representative).
+## `.coqi` (COQI v2) and deltas (`.coqid`, magic `CQID`)
+Header: magic, version 2, SHA-256 of the `.coqd` it was built from, section directory. Sections (raw, 8-byte aligned): a meta section
+(table, column, kind, trigram id per column), one section per derived/auto column (text arenas, u32 masks, f64 numbers, u8 flags), one per
+trigram table (keys, offsets, stop-grams, postings). Distribution: zstd the file.
+- `coqc index-build x.coqd -o x.coqi` prints per-section raw/zstd sizes, whole-file zstd, reload time, a byte-identical round-trip check
+  and sample-query agreement. `coqc index-stats x.coqd` prints build time, sections and sample-query timings.
+- Delta: `coqc index-diff old new [-o d.coqid]` (inputs `.coqd` or `.coqi`). Column sections carry changed/appended rows; trigram tables
+  carry stop-gram add/remove and per-gram `append` (new list extends the old bytes), `replace`, `new`, `remove`. `index-apply` replays it;
+  the result must hash to the target. A delta only applies between two files with the same layout (same meta section); otherwise ship
+  the full index.
+- Open: a mapped (zero-copy) reader; today `deserialize` builds owned columns. Arenas dominate size (`text` and `full_text` overlap).
 
-## Scope
-Goal: mirror Scryfall's search syntax (https://scryfall.com/docs/syntax) in a standalone engine; where any app's
-conventions differ, Scryfall wins. App-specific features (tags, collection state) are the host app's: it resolves
-them to ids and passes a scoped set (`registerSet`). Parser moves into Rust (`parse(&str) -> Query`) taking the
-raw Scryfall query string; plan JSON stays as IR/debug form.
+## Scope and parser
+Goal: mirror Scryfall's search syntax (https://scryfall.com/docs/syntax) in a standalone engine; where any app's conventions differ,
+Scryfall wins. App-specific features (tags, collection state) are the host app's: it resolves them to ids and passes a scoped set
+(`registerSet`).
 Parser supports: bare words, `"phrases"`, `!"exact"`, `-` negation, `( )`, `or`/`and`; keys `name t/type o/oracle/fo c/color id/identity/ci
-mv/manavalue/cmc r/rarity (full names or c/u/r/m) s/set/e/edition cn/number`; color names (guilds, shards, colleges, wedges,
-four-color), `c`/`colorless`, `m`/`multicolor`, numeric counts; `mv:even|odd`; `cn` numeric ranges; directives `order:`
-(name released cmc rarity), `direction:`, `unique:` (cards prints), `include:extras` (reveals hidden extras). Unknown or
-unsupported keywords and `~` in oracle text are errors, as on Scryfall. Default direction (no `direction:`): released desc,
-others asc (rarity default unverified).
-Defaults (as Scryfall): `unique:cards`, `prefer:newest`, alphabetical order. `prefer:oldest` supported; others (usd-low, promo, ...) TODO.
-Name matching ignores `'`, `’` and `,` (confirmed: "krrik son" finds "K'rrik, Son of Yawgmoth"); other punctuation unverified.
-`o:` ignores reminder text (parenthesised spans), `fo:` includes it. `~` = the card's own name (full name, a face name, or the
-part before the first comma) or generic "this land"/"this creature"/... (verified: Scryfall's `o:"~ enters tapped"` returns 762 cards, mostly "This land enters tapped"). The generic-word list is a fixed approximation.
-Parser TODO: `~` in oracle text, `m:`/`mana:`, `is:`/`has:`/`f:`/`in:`/`b:`/`st:`/`lang:`, price keys, `a:`/`ft:`/`wm:`,
-`unique:art`, `prefer:`, regex, `include:extras` + default hiding of funny/vanguard/memorabilia, `keyword:`, `pow/tou/loy`.
-
-## Compile-time index (`.coqi`, implemented in -23; real-data numbers pending)
-Code: `crates/format/src/search/coqi.rs`. The compiler serializes `SearchIndex` next to the dataset; the header holds the
-SHA-256 of the .coqd it was built from. Sections are raw, 8-byte aligned fixed-width arrays (mappable): meta, six oracle text
-arenas (names, names_n, names_s, types, texts, full_texts), oracle columns, printing columns, set, cn, name/text trigram tables
-(keys, offsets, stop-grams, postings). Distribution: zstd the file (or per section).
-- `coqc index-build x.coqd -o x.coqi` prints per-section raw/zstd sizes, whole-file zstd, reload time, a byte-identical round-trip check and sample-query agreement.
-- Delta: `coqc index-diff old new [-o d.coqid]` (inputs .coqd or .coqi). Row tables carry changed/appended rows; trigram tables carry
-  stop-gram add/remove and per-gram `append` (new list extends the old bytes), `replace`, `new`, `remove`. `index-apply` replays it;
-  the result must hash to the target. Run on two consecutive releases (e.g. `scripts/daily.sh --force` ~12 h apart) for the real delta.
-- Open: a mapped (zero-copy) reader; today `deserialize` builds an owned `SearchIndex`. Arenas dominate size (texts and full_texts
-  duplicate each other); if the download matters, derive `full_texts` from `texts` + reminder spans instead of storing both.
-
-Default hiding (Scryfall): layout vanguard/planar/scheme/phenomenon/art_series, set_type memorabilia and promo_types `playtest` (cmb1/cmb2/unk) are hidden; other funny sets (ugl, unh, unf, ...) are visible, verified against Scryfall unless `include:extras` or the query contains a `t:` or `s:`/`e:` term (anywhere, approximation). Tokens/emblems not hidden yet (unverified).
+mv/manavalue/cmc r/rarity (full names or c/u/r/m) s/set/e/edition cn/number`; colour names (guilds, shards, colleges, wedges, four-colour),
+`c`/`colorless`, `m`/`multicolor`, numeric counts; `mv:even|odd`; `cn` numeric ranges; directives `order:` (name released cmc rarity),
+`direction:`, `unique:` (cards prints), `include:extras` (reveals hidden extras). Unknown or unsupported keywords are errors, as on
+Scryfall. Default direction: released desc, others asc (rarity default unverified). Defaults (as Scryfall): `unique:cards`,
+`prefer:newest`, alphabetical order. `prefer:oldest` supported; others (usd-low, promo, ...) TODO.
+Name matching ignores `'`, `’` and `,` ("krrik son" finds "K'rrik, Son of Yawgmoth"). `o:` ignores reminder text (parenthesised
+spans), `fo:` includes it. `~` = the card's own name (full name, a face name, or the part before the first comma) or generic
+"this land"/"this creature"/... (verified: Scryfall's `o:"~ enters tapped"` returns 762 cards); the generic-word list is a fixed
+approximation.
+Parser TODO (S3d): `m:`/`mana:`, `is:`/`has:`/`f:`/`in:`/`b:`/`st:`/`lang:`, price keys, `a:`/`ft:`/`wm:`, `unique:art`, `prefer:`
+others, regex, `keyword:`, `pow/tou/loy`.
+Default hiding (Scryfall): layout vanguard/planar/scheme/phenomenon/art_series, set_type memorabilia and promo_types `playtest`
+(cmb1/cmb2/unk) are hidden; other funny sets are visible, unless `include:extras` or the query contains a `t:` or `s:`/`e:` term
+(anywhere, approximation). Tokens/emblems not hidden yet (unverified).

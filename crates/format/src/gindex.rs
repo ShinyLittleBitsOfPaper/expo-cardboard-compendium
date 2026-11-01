@@ -1,6 +1,7 @@
 //! S3a: a generic in-memory index and query evaluator over a [`Store`] (docs/s3-design.md). Nothing here names a dataset: columns
 //! come from the schema (`IndexKind` picks the structure) and the dialect adds *derived* columns (folded text, masks, numbers,
-//! flags) and `Custom` predicates. The old `SearchIndex` stays until S3b/S3c; tests cross-check the two.
+//! flags) and `Custom` predicates. The expensive part ([`IndexParts`]) is built once at compile time, serialised by `coqi`, and
+//! attached to a store cheaply with [`GIndex::with_parts`].
 //!
 //! Row space: queries are evaluated over the *primary* table (the one with `Rel::Parent`); a predicate on a parent table (or its
 //! sidecar) is evaluated over the parent's rows and lifted through the primary's `Ref` column. Needles for `Text` and `Str`

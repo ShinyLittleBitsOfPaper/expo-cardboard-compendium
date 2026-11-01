@@ -1,7 +1,8 @@
 //! Scryfall-syntax query parser: raw query string -> `search::Query`.
 //! Mirrors https://scryfall.com/docs/syntax. Unknown/unsupported keywords are errors (as on Scryfall),
 //! never silently treated as name text. Grammar: `or` < implicit/`and` < `-` / `( )` / terms.
-use coqc_format::search::*;
+use crate::query::*;
+use coqc_format::search::Op;
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

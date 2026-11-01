@@ -1,15 +1,18 @@
 use coqc::{compile, quick, Options};
-use coqc_format::search::*;
+use coqc_mtg::query::*;
 use std::path::PathBuf;
 
-fn setup() -> (coqc_format::Dataset, SearchIndex) {
+mod common;
+use common::Ix;
+
+fn setup() -> (coqc_mtg::Dataset, Ix) {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_a.jsonl");
     let (ds, _) = compile(&p, None, &Options { source_date: 20260701, skip_digital: true, skip_art_series: true, ..Default::default() }).unwrap();
-    let ix = SearchIndex::build(&ds);
+    let ix = Ix::build(&ds);
     (ds, ix)
 }
 
-fn names(ds: &coqc_format::Dataset, q: &str, unique: Unique) -> Vec<String> {
+fn names(ds: &coqc_mtg::Dataset, q: &str, unique: Unique) -> Vec<String> {
     let (_, ix) = setup();
     let r = ix.search(&Query { expr: quick::parse(q).unwrap(), unique, ..Default::default() });
     r.rows.iter().map(|&p| ds.oracle[ds.printings[p as usize].oracle_row as usize].name.clone().unwrap()).collect()
@@ -71,9 +74,7 @@ fn sort_paging_and_json_plan() {
 fn stop_grams_fall_back_to_scan() {
     let (ds, ix) = setup();
     // gate everything: every gram is a stop-gram, so all text queries scan; results must match
-    let scan = SearchIndex::build_with(&ds, 0.0, 0);
-    assert_eq!(scan.stats().name_grams, 0);
-    assert!(ix.stats().name_grams > 0);
+    let scan = Ix::build_with(&ds, 0.0, 0);
     for q in ["bolt", "o:\"3 damage\"", "o:the", "lim-dul", "t:creature -o:damage", "o:zzz"] {
         let query = Query { expr: quick::parse(q).unwrap(), ..Default::default() };
         assert_eq!(ix.search(&query).rows, scan.search(&query).rows, "{q}");
@@ -108,7 +109,7 @@ fn name_punctuation_tilde_reminder_and_prefer() {
     assert_eq!(names(&ds, "\"lim-dul's, vault\"", Unique::Cards), vec!["Lim-Dûl's Vault"]);
     assert_eq!(names(&ds, "o:\"~ deals 2 damage\"", Unique::Cards), vec!["Fire // Ice"]);
     assert_eq!(names(&ds, "o:\"~ deals 3\"", Unique::Cards), vec!["Lightning Bolt"]);
-    assert_eq!(coqc_format::search::strip_reminder("Flying (It can't be blocked.)\nHaste (Go.) now"), "Flying\nHaste now");
+    assert_eq!(coqc_mtg::query::strip_reminder("Flying (It can't be blocked.)\nHaste (Go.) now"), "Flying\nHaste now");
     // unique:cards keeps the newest printing before sorting
     let (_, ix) = setup();
     let q = coqc_mtg::parse::parse("!\"lightning bolt\"").unwrap();
@@ -122,42 +123,9 @@ fn name_punctuation_tilde_reminder_and_prefer() {
 fn extras_hidden_unless_revealed() {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_a.jsonl");
     let (ds, _) = compile(&p, None, &Options { source_date: 20260701, ..Default::default() }).unwrap();
-    let ix = SearchIndex::build(&ds);
+    let ix = Ix::build(&ds);
     let count = |q: &str| ix.search(&coqc_mtg::parse::parse(q).unwrap()).total;
     let hidden = count("");
     let shown = count("include:extras");
     assert!(shown > hidden, "art_series fixture card must be hidden by default ({hidden} vs {shown})");
-}
-
-#[test]
-fn coqs_round_trip_and_delta() {
-    use coqc_format::search::coqs;
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    let opts = Options { source_date: 20260701, ..Default::default() };
-    let (a, _) = compile(&dir.join("sample_a.jsonl"), None, &opts).unwrap();
-    let ia = SearchIndex::build(&a);
-    let fa = coqs::serialize(&ia, &[7u8; 32]);
-    let (back, sha) = coqs::deserialize(&fa).unwrap();
-    assert_eq!(sha, [7u8; 32]);
-    assert_eq!(coqs::serialize(&back, &sha), fa);
-    for q in ["bolt", "o:\"3 damage\"", "t:creature -o:damage", "c>=ur", "mv<=1", "s:m11", "include:extras", "!\"fire // ice\""] {
-        let query = coqc_mtg::parse::parse(q).unwrap();
-        assert_eq!(ia.search(&query).rows, back.search(&query).rows, "{q}");
-    }
-    // corrupt input is rejected, not a panic
-    assert!(coqs::deserialize(&fa[..fa.len() / 2]).is_err());
-    assert!(coqs::deserialize(b"nope").is_err());
-
-    // delta: next-day dataset built on top of the first (stable rows, appended cards)
-    let b_path = dir.join("sample_b.jsonl");
-    if !b_path.exists() {
-        return;
-    }
-    let (b, _) = compile(&b_path, Some(&a), &opts).unwrap();
-    let fb = coqs::serialize(&SearchIndex::build(&b), &[8u8; 32]);
-    let (delta, info) = coqs::make_delta(&fa, &fb).unwrap();
-    assert!(!info.tables.is_empty());
-    assert_eq!(coqs::apply_delta(&fa, &delta).unwrap(), fb);
-    // wrong base is refused
-    assert!(coqs::apply_delta(&fb, &delta).is_err());
 }

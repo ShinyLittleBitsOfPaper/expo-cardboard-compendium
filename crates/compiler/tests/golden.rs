@@ -1,8 +1,11 @@
 //! S0 golden tests: lock today's MTG search behaviour and container size before the schema-driven rewrite.
 //! Regenerate on purpose with `UPDATE_GOLDEN=1 cargo test -p coqc --test golden`; any other diff is a regression.
 use coqc::{compile, quick, Options};
-use coqc_format::search::*;
+use coqc_mtg::query::*;
 use std::path::PathBuf;
+
+mod common;
+use common::Ix;
 
 const QUERIES: &[&str] = &[
     "bolt", "\"lightning bolt\"", "!\"lightning bolt\"", "lim-dul", "delver", "insectile", "fire ice", "stomp",
@@ -22,7 +25,7 @@ fn run() -> (String, usize) {
     // Row and key sections only: the embedded schema is a fixed ~1 KB that would dominate this 14-row fixture.
     let (_, stats) = coqc_mtg::write(&ds).unwrap();
     let size = stats.iter().filter(|s| s.name != "schema" && s.name != "meta").map(|s| s.stored_bytes as usize).sum::<usize>();
-    let ix = SearchIndex::build(&ds);
+    let ix = Ix::build(&ds);
     let mut out = String::new();
     for q in QUERIES {
         for (label, unique) in [("cards", Unique::Cards), ("prints", Unique::Prints)] {

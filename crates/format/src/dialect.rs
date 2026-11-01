@@ -2,14 +2,11 @@
 //! columns and custom predicates, the JSON shape of a record, and the natural-key lookup; the container, patch, index and sync
 //! code never name a dataset. `row` is a row of the primary table (MTG: a printing).
 use crate::gindex::{GQuery, Hooks, IndexSpec};
-use crate::search::Query;
 use crate::table::Store;
 
 pub trait Dialect: Send + Sync {
     /// Stable id stored in schemas, e.g. `"mtg"`.
     fn id(&self) -> &'static str;
-    /// Parse the dataset's query language into the legacy query tree (kept for the S3a cross-check tests; removed in S3c).
-    fn parse_query(&self, q: &str) -> Result<Query, String>;
     /// Parse the dataset's query language into the generic query tree (sort/unique/prefer/hide directives included).
     fn parse_gquery(&self, q: &str) -> Result<GQuery, String>;
     /// Derived columns and the automatic text columns to skip, computed from the store at index-build time.

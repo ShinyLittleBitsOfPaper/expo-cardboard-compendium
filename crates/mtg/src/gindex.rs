@@ -1,15 +1,15 @@
-//! MTG side of the generic index (S3a): derived columns, `Custom` predicates, and the translation of the Scryfall query tree
-//! (`coqc_format::search::Query`) into the generic one. Derivation still reads the legacy `Dataset` (S3b/S3c move it onto the
-//! `Store`); the folding rules are exactly those of `SearchIndex::build`.
+//! MTG side of the generic index: derived columns (computed from the `Store`), `Custom` predicates, and the translation of the
+//! Scryfall query tree (`crate::query::Query`) into the generic one (`coqc_format::gindex::GQuery`).
 use coqc_format::gindex::*;
-use coqc_format::search::*;
+use crate::query::*;
 use coqc_format::table::{ColData, Store};
-use coqc_format::{Dataset, OracleRecord};
+use crate::types::OracleRecord;
+use coqc_format::search::{fold, Bits, Op};
 use crate::tables;
 
 pub const TEXT_GROUP: &str = "text";
 
-/// Column builder shared by [`derive`] (legacy `Dataset`) and [`derive_store`] (`Store`), so both fold identically.
+/// Column builder for [`derive_store`].
 #[derive(Default)]
 struct Acc {
     name_plain: Vec<String>,
@@ -79,22 +79,7 @@ impl Acc {
 /// Schema `Text` columns the MTG dialect never searches by their own name (it searches the derived, folded variants instead).
 pub const SKIP_AUTO: [&str; 6] = ["oracle.name", "oracle.type_line", "oracle.oracle_text", "printing.set_name", "printing.flavor_text", "printing.artist"];
 
-pub fn derive(ds: &Dataset) -> Vec<DerivedCol> {
-    let mut a = Acc::default();
-    ds.oracle.iter().for_each(|o| a.oracle(o));
-    let rarities: Vec<String> = ds.meta.rarities.values().iter().map(|r| r.to_string()).collect();
-    let layouts = ds.meta.layouts.values();
-    let promo_types = ds.meta.promo_types.values();
-    for p in &ds.printings {
-        let layout = p.layout.and_then(|l| layouts.get(l as usize)).map(|x| x.as_str());
-        let playtest = p.promo_types.as_ref().is_some_and(|v| v.iter().any(|&t| promo_types.get(t as usize).is_some_and(|n| n == "playtest")));
-        let rar = p.rarity.and_then(|id| rarities.get(id as usize)).map(|s| s.as_str());
-        a.printing(layout, p.extra.as_deref(), playtest, p.set_code.as_deref(), p.collector_number.as_deref(), rar);
-    }
-    a.finish()
-}
-
-/// Same columns as [`derive`], computed straight from a store with the MTG schema (no `Dataset` is built).
+/// The derived index columns, computed straight from a store with the MTG schema (no `Dataset` is built).
 pub fn derive_store(st: &Store) -> Result<Vec<DerivedCol>, String> {
     let e = |e: coqc_format::Error| e.to_string();
     tables::check_schema(st).map_err(e)?;

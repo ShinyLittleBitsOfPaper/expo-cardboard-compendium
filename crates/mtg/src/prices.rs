@@ -5,7 +5,7 @@
 use coqc_format::codec::{Error, Reader, Writer};
 use crate::json::parse_uuid;
 use coqc_format::prices::PriceTable;
-use coqc_format::Dataset;
+use crate::types::Dataset;
 use serde::Deserialize;
 use std::collections::HashMap;
 

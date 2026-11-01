@@ -63,7 +63,7 @@ Single-line `-t:land` re-run (expect 37848) and the real-data timing loop again 
   offset/limit are generic. Query tree is serde JSON.
 - `coqc_mtg::gindex`: `derive(&Dataset)` (still reads the legacy `Dataset`, same folding as `SearchIndex::build`), `MtgHooks`
   (`tilde`, `mv_parity`, `name_exact`), `translate(&Query) -> GQuery`.
-- Old `search.rs` helpers (`Bits`, `Arena`, `Trigrams`, `fold*`, `oracle_mask`, ...) made `pub` so the new code reuses them; deleted in S3c.
+- Old `search.rs` helpers (`Bits`, `Arena`, `Trigrams`, `fold*`, `oracle_mask`, ...) made `pub` so the new code reuses them; deleted in S3c (done).
 - `crates/compiler/tests/gindex.rs`: ~120 queries x unique x prefer x include-extras over sample_a/sample_b (with and without skip flags)
   and 4000 synthetic cards: identical totals and row order to the old index. 54 tests pass.
 - Not done in S3a (S3b): `.coqi` serialisation/delta of the generic index, deriving from the `Store` instead of the `Dataset`, engine/CLI switch,
@@ -81,3 +81,9 @@ Single-line `-t:land` re-run (expect 37848) and the real-data timing loop again 
 - Trimmed auto text columns (6 MTG columns). `derive_store` reads the `Store` directly. Engine/CLI no longer need `Dataset`.
 - Not done: typed fast path for hot fields (only if real-data latency needs it), schema `ordered` enum flag, `.coqi` memory-mapping, S3c (delete `Dataset`, old `search.rs`/`coqs.rs`, `container.rs`; docs rewrite), S3d (regex, `is:`/`f:`/`pow`/`tou`).
 - Synthetic 120k: .coqi 20.57 MB raw, 2.05 MB zstd; build 1.32 s vs old 0.94 s; queries (ms, old/generic): bolt 0.21/0.45, t:creature 12.4/12.9, o:flying 8.3/10.3, mv>=5 5.3/6.6, s:lea 2.3/0.65, -t:land 11.9/12.8.
+
+## S3c status (0.0.2-22, built)
+- Deleted from `coqc-format`: `container.rs`/`Dataset`, `types.rs`, `SearchIndex`, `search/coqs.rs`, `Dialect::parse_query`. `Dict` -> `dict.rs`; `search.rs` is the shared text-index primitives only.
+- Ingestion still builds the MTG record structs, so they live in `coqc-mtg` (`types.rs`: `Dataset`, `OracleRecord`, `PrintingRecord`, ...; `query.rs`: the Scryfall query tree). They are the working shape of `compile`/`verify` and the bridge `tables::{to_store, from_store}`; the engine, the index and the CLI search path never build them. Writing `Store` directly from ingestion is possible later but was not needed to finish S3.
+- Oracle: `tests/golden/gindex-oracle.txt` replaces the live old-index comparison. Regenerating it needs the pre-S3c code (0.0.2-21); treat any diff as a behaviour change.
+- Remaining: S3d (regex, `is:`/`f:`/`pow`/`tou`, price predicates), schema `ordered` enum flag, mapped `.coqi` reader.

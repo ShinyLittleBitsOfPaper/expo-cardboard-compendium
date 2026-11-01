@@ -21,7 +21,7 @@
 use crate::codec::*;
 use crate::schema::*;
 use crate::table::*;
-use crate::types::Dict;
+use crate::dict::Dict;
 use sha2::{Digest, Sha256};
 
 pub const MAGIC: &[u8; 4] = b"COQD";

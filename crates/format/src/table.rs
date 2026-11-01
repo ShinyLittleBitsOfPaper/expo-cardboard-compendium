@@ -2,7 +2,7 @@
 //! their id for ever, exactly like the oracle/printing vectors of the old `Dataset`. On disk (S2b) rows are still written in
 //! zstd blocks so appends touch only tail blocks; the columnar layout is the in-memory and search-time shape.
 use crate::schema::*;
-use crate::types::Dict;
+use crate::dict::Dict;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ColData {

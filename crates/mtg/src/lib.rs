@@ -1,20 +1,23 @@
 //! The Magic: The Gathering dialect of coq. Everything that knows about Scryfall's card JSON, MTGJSON prices or Scryfall query
-//! syntax lives here; `coqc-format` holds the container, patch, price-table and index machinery. See docs/schema-design.md (S1).
+//! syntax lives here; `coqc-format` holds the container, patch, price-table and index machinery (no record types). See docs/schema-design.md (S1).
 
 pub mod gindex;
 pub mod ingest;
 pub mod json;
 pub mod parse;
 pub mod prices;
+pub mod query;
 pub mod quick;
 pub mod synth;
 pub mod tables;
+pub mod types;
 
 pub use ingest::*;
 pub use parse::ParseError;
+pub use query::*;
+pub use types::*;
 pub use tables::{read, write};
 
-use coqc_format::search::Query;
 
 /// The MTG implementation of [`coqc_format::dialect::Dialect`].
 pub struct Mtg;
@@ -22,9 +25,6 @@ pub struct Mtg;
 impl coqc_format::dialect::Dialect for Mtg {
     fn id(&self) -> &'static str {
         "mtg"
-    }
-    fn parse_query(&self, q: &str) -> Result<Query, String> {
-        parse::parse(q).map_err(|e| e.0)
     }
     fn parse_gquery(&self, q: &str) -> Result<coqc_format::gindex::GQuery, String> {
         Ok(gindex::translate(&parse::parse(q).map_err(|e| e.0)?))

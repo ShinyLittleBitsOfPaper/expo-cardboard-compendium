@@ -1,7 +1,7 @@
 //! Rebuild Scryfall-shaped card JSON from an oracle + printing record pair.
 //! The compiler uses this as a self-check; engines use it to serve full cards.
 
-use coqc_format::types::*;
+use crate::types::*;
 use serde_json::{Map, Value};
 
 /// Top-level keys carried on the ORACLE record's `extra` (rules-level data).

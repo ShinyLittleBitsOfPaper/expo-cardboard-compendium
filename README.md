@@ -51,11 +51,11 @@ See `docs/roadmap.md` for what is planned next (data pipeline, client sync, engi
 
 ## Layout
 
-- `crates/format`: `coqc-format` (records, container, patch, search index, `Dialect` trait; no Scryfall knowledge beyond the record types until S2)
+- `crates/format`: `coqc-format` (generic: schema, columnar `Store`, COQD container, COQP patches, price tables, the generic search index and `.coqi`, `Dialect` trait; no Magic knowledge)
 - `crates/format/src/schema.rs`, `table.rs`, `coqd.rs`: generic schema, columnar table store, and the COQD v3 container (`coqd.rs` header documents the layout); `patch.rs`: COQP v2 row patches over stores
-- `crates/mtg`: `coqc-mtg` (the Magic dialect: Scryfall ingestion `ingest.rs`, MTGJSON price ingestion `prices.rs`, Scryfall query syntax `parse.rs`, card JSON `json.rs`, `synth.rs`)
+- `crates/mtg`: `coqc-mtg` (the Magic dialect: record types `types.rs` (`Dataset`, the ingestion working shape), `tables.rs` (schema + Store bridge), index columns/predicates `gindex.rs`, query tree `query.rs`, Scryfall ingestion `ingest.rs`, MTGJSON price ingestion `prices.rs`, Scryfall query syntax `parse.rs`, card JSON `json.rs`, `synth.rs`)
 - `crates/compiler`: `coqc` (library + CLI)
-- `crates/format/src/search.rs`: search index + query plan; `search/coqi.rs`: `.coqi` serialization + deltas (docs/search.md)
+- `crates/format/src/{gindex,search,coqi}.rs`: generic index evaluator, text-index primitives, `.coqi` serialization + deltas (docs/search.md)
 - `crates/format/src/prices.rs`, `crates/mtg/src/prices.rs`: price dataset (docs/prices.md); `scripts/daily-prices.sh`
 - `scripts/fetch-bulk.sh`: bulk download with Scryfall-friendly headers; skips when updated_at is unchanged
 - `docs/format.md`: file format spec; `docs/phase0.md`: findings, open questions, next steps

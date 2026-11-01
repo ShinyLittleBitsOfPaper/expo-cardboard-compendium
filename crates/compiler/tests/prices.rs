@@ -6,7 +6,7 @@ use std::path::PathBuf;
 const BOLT1: &str = "00000000-0000-4000-8000-000000000001";
 const BOLT2: &str = "00000000-0000-4000-8000-000000000002";
 
-fn cards() -> coqc_format::Dataset {
+fn cards() -> coqc_mtg::Dataset {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_a.jsonl");
     compile(&p, None, &Options { source_date: 20260701, ..Default::default() }).unwrap().0
 }

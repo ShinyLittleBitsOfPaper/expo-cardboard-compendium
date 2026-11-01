@@ -1,68 +1,21 @@
-//! Record types. A card is split into an ORACLE record (rules-level data shared
-//! by every printing) and a PRINTING record (one per Scryfall card id).
+//! MTG record types. A card is split into an ORACLE record (rules-level data shared by every printing) and a PRINTING record (one per
+//! Scryfall card id). These are the working shape of MTG ingestion (`ingest.rs`) and the bridge to the generic `Store` (`tables.rs`);
+//! the engine, the index and the CLI search path read the `Store` and never build them for a whole dataset.
 //!
-//! Losslessness: fields the engine will index are typed; every other top-level
-//! or per-face key is kept in `extra` as compact JSON text (keys sorted), so
-//! nothing Scryfall sends is dropped and unknown future keys survive.
+//! Losslessness: fields the engine will index are typed; every other top-level or per-face key is kept in `extra` as compact JSON
+//! text (keys sorted), so nothing Scryfall sends is dropped and unknown future keys survive.
 
-use crate::codec::*;
-use std::collections::HashMap;
+use coqc_format::codec::*;
+use coqc_format::Dict;
 
-/// Append-only string dictionary. IDs are positions and must never be reordered
-/// between releases, otherwise unchanged records would re-encode differently.
-#[derive(Clone, Default, Debug, PartialEq)]
-pub struct Dict {
-    values: Vec<String>,
-    index: HashMap<String, u32>,
-}
-
-impl Dict {
-    pub fn from_values(values: Vec<String>) -> Self {
-        let index = values
-            .iter()
-            .enumerate()
-            .map(|(i, s)| (s.clone(), i as u32))
-            .collect();
-        Self { values, index }
-    }
-    pub fn id(&self, s: &str) -> Option<u32> {
-        self.index.get(s).copied()
-    }
-    pub fn push(&mut self, s: &str) -> u32 {
-        if let Some(i) = self.index.get(s) {
-            return *i;
-        }
-        let i = self.values.len() as u32;
-        self.values.push(s.to_string());
-        self.index.insert(s.to_string(), i);
-        i
-    }
-    pub fn get(&self, id: u32) -> Option<&str> {
-        self.values.get(id as usize).map(|s| s.as_str())
-    }
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-    pub fn values(&self) -> &[String] {
-        &self.values
-    }
-    pub fn encode(&self, w: &mut Writer) {
-        w.uvarint(self.values.len() as u64);
-        for v in &self.values {
-            w.str(v);
-        }
-    }
-    pub fn decode(r: &mut Reader) -> Result<Self> {
-        let n = r.uvarint()? as usize;
-        let mut v = Vec::with_capacity(n);
-        for _ in 0..n {
-            v.push(r.string()?);
-        }
-        Ok(Self::from_values(v))
-    }
+/// The MTG in-memory dataset: oracle / ranks / printings vectors plus metadata.
+#[derive(Clone, Debug)]
+pub struct Dataset {
+    pub meta: Meta,
+    pub oracle: Vec<OracleRecord>,
+    /// One entry per oracle row (same length as `oracle`).
+    pub ranks: Vec<Ranks>,
+    pub printings: Vec<PrintingRecord>,
 }
 
 /// Dataset-wide metadata. Dictionaries are append-only across releases.

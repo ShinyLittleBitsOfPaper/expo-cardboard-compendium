@@ -5,7 +5,8 @@
 use coqc_format::codec::{Error, Reader, Result, Writer};
 use coqc_format::schema::{ColType as T, ColumnDef as C, IndexKind as I, Rel, Schema, TableDef};
 use coqc_format::table::{ColData, Store};
-use coqc_format::*;
+use crate::types::*;
+use coqc_format::{read_store, write_store, Dict, SectionStat};
 
 const DICTS: [&str; 7] = ["layouts", "rarities", "border_colors", "langs", "promo_types", "image_keys", "formats"];
 

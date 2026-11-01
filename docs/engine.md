@@ -18,8 +18,8 @@ updates. The only native entry point is the C ABI in `ffi.rs`: `coqe_call(method
 
 Notes
 - Default hiding (extras) still applies inside a scope; add `include:extras` if a collection can hold such cards.
-- Phase 1 limits: the dataset is decoded into memory and the index is an owned copy (reload ~24 ms, dataset decode not yet measured on a
-  device). A mapped, lazily-decoded reader is the next step if memory is a problem.
+- Memory: the dataset is held as a columnar `Store` (no per-record structs, no `Dataset`); the index columns are owned copies attached
+  per search. Not yet measured on a device. A mapped, lazily-decoded reader is the next step if memory is a problem.
 - `modules/expo-cardboard-compendium` is a scaffold (TS API, Kotlin + JNI shim, Swift, podspec) and `scripts/build-native.sh` cross-compiles.
   None of it has been built or run: there is no Android/Xcode toolchain here. Expect first-build fixes (Gradle plugin names, CMake paths).
 

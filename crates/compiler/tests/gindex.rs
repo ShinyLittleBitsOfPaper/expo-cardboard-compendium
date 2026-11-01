@@ -1,10 +1,11 @@
-//! S3a cross-check: the generic index (`coqc_format::gindex`, driven by the schema + MTG derived columns) must return exactly the same
-//! rows, in the same order, as the old `SearchIndex` for every query, sort, unique and prefer combination.
+//! The generic index (`coqc_format::gindex`, driven by the schema + MTG derived columns) against `tests/golden/gindex-oracle.txt`: the
+//! total and an FNV hash of the ordered rows for every query x unique x prefer x include-extras combination, recorded from the
+//! pre-S3 `SearchIndex` before it was deleted (S3c). Any diff is a behaviour change.
 use coqc::{compile, Options};
 use coqc_format::coqi;
-use coqc_format::gindex::{GIndex, IndexParts};
-use coqc_format::search::*;
-use coqc_mtg::gindex::{derive, derive_store, index_spec, translate, MtgHooks};
+use coqc_format::gindex::GIndex;
+use coqc_mtg::query::*;
+use coqc_mtg::gindex::{index_spec, translate, MtgHooks};
 use std::path::PathBuf;
 
 const QUERIES: &[&str] = &[
@@ -20,10 +21,23 @@ const QUERIES: &[&str] = &[
     "c:r order:rarity direction:desc", "bolt prefer:newest", "bolt prefer:oldest", "t:instant order:cmc direction:asc", "t:creature unique:cards order:name", "include:extras", "t:plane include:extras",
 ];
 
-fn check(ds: &coqc_format::Dataset, label: &str) {
-    let old = SearchIndex::build(ds);
+fn oracle() -> std::collections::HashMap<String, (usize, u64)> {
+    let text = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/gindex-oracle.txt")).unwrap();
+    text.lines()
+        .map(|l| {
+            let f: Vec<&str> = l.split('|').collect();
+            (f[..5].join("|"), (f[5].parse().unwrap(), u64::from_str_radix(f[6], 16).unwrap()))
+        })
+        .collect()
+}
+
+fn fnv(rows: &[u32]) -> u64 {
+    rows.iter().flat_map(|r| r.to_le_bytes()).fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+}
+
+fn check(ds: &coqc_mtg::Dataset, label: &str) {
+    let golden = oracle();
     let store = coqc_mtg::tables::to_store(ds);
-    let new = GIndex::build(&store, derive(ds), Some(&MtgHooks)).unwrap();
     // S3b: derived from the Store (auto text columns trimmed), then serialised to a .coqi and reloaded
     let from_store = GIndex::build_spec(&store, index_spec(&store).unwrap(), Some(&MtgHooks)).unwrap();
     let file = coqi::serialize(from_store.parts(), &store.schema, &[9u8; 32]);
@@ -41,14 +55,14 @@ fn check(ds: &coqc_format::Dataset, label: &str) {
                     query.unique = if base.unique == Unique::Cards { Unique::Cards } else { unique };
                     query.prefer = prefer;
                     query.include_extras = extras || base.include_extras;
-                    let want = old.search(&query);
-                    let got = new.search(&translate(&query)).unwrap_or_else(|e| panic!("{label}: {q}: {e}"));
-                    assert_eq!(want.total, got.total, "{label}: {q} (unique {:?}, extras {extras}): total", query.unique);
-                    assert_eq!(want.rows, got.rows, "{label}: {q} (unique {:?}, prefer {prefer:?}, extras {extras}): rows", query.unique);
+                    let key = format!("{label}|{q}|{:?}|{prefer:?}|{extras}", query.unique);
+                    let (want_total, want_hash) = *golden.get(&key).unwrap_or_else(|| panic!("no oracle line for {key}"));
+                    let got = from_store.search(&translate(&query)).unwrap_or_else(|e| panic!("{label}: {q}: {e}"));
+                    assert_eq!((want_total, want_hash), (got.total, fnv(&got.rows)), "{label}: {q} (unique {:?}, prefer {prefer:?}, extras {extras})", query.unique);
                     let g = translate(&query);
                     for (name, ix) in [("store-derived", &from_store), ("reloaded .coqi", &again)] {
                         let r = ix.search(&g).unwrap_or_else(|e| panic!("{label}: {name}: {q}: {e}"));
-                        assert_eq!((want.total, &want.rows), (r.total, &r.rows), "{label}: {name}: {q} (unique {:?}, prefer {prefer:?}, extras {extras})", query.unique);
+                        assert_eq!((want_total, want_hash), (r.total, fnv(&r.rows)), "{label}: {name}: {q} (unique {:?}, prefer {prefer:?}, extras {extras})", query.unique);
                     }
                     checked += 1;
                     nonempty += (got.total > 0) as usize;
@@ -60,20 +74,20 @@ fn check(ds: &coqc_format::Dataset, label: &str) {
     assert!(nonempty * 4 > checked, "{label}: only {nonempty}/{checked} comparisons returned rows");
 }
 
-fn load(name: &str, skip: bool) -> coqc_format::Dataset {
+fn load(name: &str, skip: bool) -> coqc_mtg::Dataset {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
     compile(&p, None, &Options { source_date: 20260701, skip_digital: skip, skip_art_series: skip, ..Default::default() }).unwrap().0
 }
 
 #[test]
-fn matches_old_index_on_fixtures() {
+fn matches_oracle_on_fixtures() {
     for (n, skip) in [("sample_a.jsonl", true), ("sample_a.jsonl", false), ("sample_b.jsonl", true), ("sample_b.jsonl", false)] {
         check(&load(n, skip), &format!("{n} skip={skip}"));
     }
 }
 
 #[test]
-fn matches_old_index_on_synthetic_data() {
+fn matches_oracle_on_synthetic_data() {
     let dir = std::env::temp_dir().join(format!("coqc-gindex-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let p = dir.join("synth.jsonl");
@@ -87,7 +101,7 @@ fn matches_old_index_on_synthetic_data() {
 fn generic_query_json_roundtrip_and_errors() {
     let ds = load("sample_a.jsonl", true);
     let store = coqc_mtg::tables::to_store(&ds);
-    let ix = GIndex::build(&store, derive(&ds), Some(&MtgHooks)).unwrap();
+    let ix = GIndex::build_spec(&store, index_spec(&store).unwrap(), Some(&MtgHooks)).unwrap();
     let q = translate(&coqc_mtg::parse::parse("t:creature c:r").unwrap());
     let back: coqc_format::gindex::GQuery = serde_json::from_str(&serde_json::to_string(&q).unwrap()).unwrap();
     assert_eq!(ix.search(&q).unwrap().rows, ix.search(&back).unwrap().rows);
@@ -99,65 +113,36 @@ fn generic_query_json_roundtrip_and_errors() {
 /// `cargo test -p coqc --release --test gindex -- --ignored --nocapture`: build and query timings on 120k synthetic printings.
 #[test]
 #[ignore]
-fn timings_old_vs_generic() {
+fn timings_generic() {
     use std::time::Instant;
     let dir = std::env::temp_dir().join(format!("coqc-gindex-t-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let p = dir.join("synth.jsonl");
     coqc_mtg::synth::generate(&p, 120_000, 1).unwrap();
     let ds = compile(&p, None, &Options { source_date: 20260701, ..Default::default() }).unwrap().0;
-    let t = Instant::now();
-    let old = SearchIndex::build(&ds);
-    println!("old build {:?}", t.elapsed());
     let store = coqc_mtg::tables::to_store(&ds);
     let t = Instant::now();
     let new = GIndex::build_spec(&store, index_spec(&store).unwrap(), Some(&MtgHooks)).unwrap();
-    println!("generic derive-from-store+build {:?} (S3b: unsearched auto text columns skipped)", t.elapsed());
+    println!("derive-from-store+build {:?}", t.elapsed());
     let f = coqi::serialize(new.parts(), &store.schema, &[0u8; 32]);
     println!(".coqi {} bytes raw, {} zstd", f.len(), coqi::compress(&f).len());
     for q in ["bolt", "t:creature", "c:rg", "o:flying", "mv>=5", "r:mythic", "s:lea", "-t:land", "t:legendary t:creature c>=gu"] {
-        let query = coqc_mtg::parse::parse(q).unwrap();
-        let gq = translate(&query);
-        let (mut a, mut b) = (0.0, 0.0);
+        let gq = translate(&coqc_mtg::parse::parse(q).unwrap());
+        let mut b = 0.0;
         for _ in 0..5 {
             let t = Instant::now();
-            let x = old.search(&query);
-            a += t.elapsed().as_secs_f64() * 200.0;
-            let t = Instant::now();
-            let y = new.search(&gq).unwrap();
+            new.search(&gq).unwrap();
             b += t.elapsed().as_secs_f64() * 200.0;
-            assert_eq!(x.rows, y.rows);
         }
-        println!("{q:35} old {a:7.2} ms   generic {b:7.2} ms");
+        println!("{q:35} {b:7.2} ms");
     }
     std::fs::remove_dir_all(&dir).ok();
 }
 
-fn parts_of(ds: &coqc_format::Dataset) -> (coqc_format::table::Store, IndexParts) {
+fn parts_of(ds: &coqc_mtg::Dataset) -> (coqc_format::table::Store, coqc_format::gindex::IndexParts) {
     let store = coqc_mtg::tables::to_store(ds);
     let parts = GIndex::build_parts(&store, index_spec(&store).unwrap(), coqc_format::search::STOP_FRACTION, coqc_format::search::STOP_MIN).unwrap();
     (store, parts)
-}
-
-#[test]
-fn derive_from_store_equals_derive_from_dataset() {
-    for (n, skip) in [("sample_a.jsonl", true), ("sample_b.jsonl", false)] {
-        let ds = load(n, skip);
-        let store = coqc_mtg::tables::to_store(&ds);
-        let (a, b) = (derive(&ds), derive_store(&store).unwrap());
-        assert_eq!(a.len(), b.len());
-        for (x, y) in a.iter().zip(&b) {
-            assert_eq!((&x.table, &x.name, &x.tri_group), (&y.table, &y.name, &y.tri_group));
-            use coqc_format::gindex::DData::*;
-            match (&x.data, &y.data) {
-                (Text(p), Text(q)) => assert_eq!(p, q, "{}", x.name),
-                (Mask(p), Mask(q)) => assert_eq!(p, q, "{}", x.name),
-                (Num(p), Num(q)) => assert_eq!(p, q, "{}", x.name),
-                (Flag(p), Flag(q)) => assert_eq!(p, q, "{}", x.name),
-                _ => panic!("kind differs for {}", x.name),
-            }
-        }
-    }
 }
 
 #[test]

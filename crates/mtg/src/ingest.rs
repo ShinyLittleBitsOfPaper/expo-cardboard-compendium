@@ -7,7 +7,8 @@
 
 
 use crate::json::*;
-use coqc_format::{Dataset, Dict, Images, Meta, OracleFace, OracleRecord, PrintingFace, PrintingRecord, Ranks};
+use crate::types::{Dataset, Images, Meta, OracleFace, OracleRecord, PrintingFace, PrintingRecord, Ranks};
+use coqc_format::Dict;
 use serde::de::{SeqAccess, Visitor};
 use serde::Deserializer as _;
 use serde_json::{Map, Value};

@@ -51,7 +51,7 @@ fn sha_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn load(path: &Path) -> (Vec<u8>, coqc_format::Dataset) {
+fn load(path: &Path) -> (Vec<u8>, coqc_mtg::Dataset) {
     let bytes = std::fs::read(path).unwrap_or_else(|e| die(&format!("{}: {e}", path.display())));
     let ds = read(&bytes).unwrap_or_else(|e| die(&format!("{}: {e}", path.display())));
     (bytes, ds)

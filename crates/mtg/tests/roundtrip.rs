@@ -1,5 +1,6 @@
 use coqc_format::codec::{Reader, Writer};
 use coqc_format::*;
+use coqc_mtg::types::*;
 use coqc_mtg::{read, write};
 
 #[test]
