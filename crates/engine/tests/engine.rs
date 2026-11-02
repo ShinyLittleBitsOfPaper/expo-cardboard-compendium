@@ -224,3 +224,43 @@ fn price_overlay_attach_search_and_patch_file() {
     // generic aliases
     assert!(e.call("getRecords", &json!({"rows": [0]})).unwrap()[0].is_object());
 }
+
+#[test]
+fn batch_lookups_and_persistent_sets() {
+    let dir = tmp("s");
+    let (a, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
+    let (bytes, _) = write(&a).unwrap();
+    let (coqd, coqi_p, sp) = (dir.join("c.coqd"), dir.join("c.coqi"), dir.join("sets.json"));
+    std::fs::write(&coqd, &bytes).unwrap();
+    let mut e = Engine::open(&coqd, Some(&coqi_p)).unwrap();
+    let cards = e.call("search", &json!({"query": "include:extras", "limit": 3, "cards": true})).unwrap();
+    let ids: Vec<String> = cards["cards"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap().to_string()).collect();
+    let mut q = ids.clone();
+    q.insert(1, "nope".into());
+    let rows = e.call("rowsOf", &json!({"ids": q})).unwrap();
+    assert_eq!(rows[0], cards["rows"][0]);
+    assert!(rows[1].is_null());
+    assert_eq!(rows[2], cards["rows"][1]);
+    let recs = e.call("getByKeys", &json!({"ids": q})).unwrap();
+    assert_eq!(recs[0]["id"], ids[0]);
+    assert!(recs[1].is_null());
+    assert_eq!(e.call("getByScryfallIds", &json!({"ids": q})).unwrap(), recs);
+
+    // register by rows (out-of-range rows are counted as unknown), search in scope, persist and reload
+    let r = e.call("registerRows", &json!({"name": "mine", "rows": [cards["rows"][0], cards["rows"][1], 9999999]})).unwrap();
+    assert_eq!((r["resolved"].as_u64(), r["unknown"].as_u64()), (Some(2), Some(1)));
+    assert_eq!(e.call("search", &json!({"query": "include:extras", "scope": "mine"})).unwrap()["total"], 2);
+    e.call("saveSets", &json!({"path": sp})).unwrap();
+    let mut e2 = Engine::open(&coqd, Some(&coqi_p)).unwrap();
+    assert!(e2.call("search", &json!({"query": "x", "scope": "mine"})).is_err());
+    assert_eq!(e2.call("loadSets", &json!({"path": sp})).unwrap()["loaded"], 1);
+    assert_eq!(e2.call("search", &json!({"query": "include:extras", "scope": "mine"})).unwrap()["total"], 2);
+    e2.call("dropSet", &json!({"name": "mine"})).unwrap();
+    assert!(e2.call("search", &json!({"query": "x", "scope": "mine"})).is_err());
+    // another epoch or a broken file loads nothing
+    std::fs::write(&sp, br#"{"epoch": 424242, "sets": {"mine": [0]}}"#).unwrap();
+    assert_eq!(e2.call("loadSets", &json!({"path": sp})).unwrap()["loaded"], 0);
+    std::fs::write(&sp, b"garbage").unwrap();
+    assert_eq!(e2.call("loadSets", &json!({"path": sp})).unwrap()["loaded"], 0);
+    assert_eq!(e2.call("loadSets", &json!({"path": dir.join("none.json")})).unwrap()["loaded"], 0);
+}

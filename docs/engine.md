@@ -12,6 +12,10 @@ updates. The only native entry point is the C ABI in `ffi.rs`: `coqe_call(method
 | `getByKey` (alias `getByScryfallId`) | `key` (or `id`) | record by natural key (MTG: Scryfall id) or `null` |
 | `attachOverlay` | `id`, `path` (.coqd) | attaches (or replaces) an overlay dataset, e.g. `prices`; refused when its epoch differs from the open dataset. `info.overlays` lists id -> `{sha256, rows, sourceDate}`. Re-attach after a sync replaced the file |
 | `getPrices` | `rows[]` | MTGJSON retail prices per row from the `prices` overlay, Scryfall-shaped: `{usd, usd_foil, usd_etched, eur, eur_foil, eur_etched}` (strings, `null` = no price); `null` for an unknown row. `getRecords` / `search {cards:true}` take `prices: true` to add the same object as `card.prices` |
+| `rowsOf` | `ids[]` | row (or `null`) per Scryfall id, in order |
+| `getByKeys` (alias `getByScryfallIds`) | `ids[]`, `prices?` | record (or `null`) per id, in order |
+| `registerRows` / `dropSet` | `name`, `rows[]` / `name` | scope from rows (`{resolved, unknown}`; removed or out-of-range rows count as unknown) / remove it |
+| `saveSets` / `loadSets` | `path` | persist all scopes (with the dataset epoch) / load them back: `{loaded}`; another epoch, a missing or bad file loads 0, so re-register from your own data |
 | `detachOverlay` | `id` | removes it again |
 | `registerSet` | `name`, `ids[]` | `{resolved, unknown}`; later `search {scope: name}` can only match those printings |
 | `applyPatch` | `path` (.coqp) | replaces the .coqd atomically; index marked `stale` |

@@ -44,6 +44,17 @@ export const getByScryfallId = getByKey;
  */
 export const attachOverlay = (id: string, path: string) => call<EngineInfo>('attachOverlay', { id, path });
 export const detachOverlay = (id: string) => call<EngineInfo>('detachOverlay', { id });
+/** Rows of many Scryfall ids at once, in order; null for an unknown id. */
+export const rowsOf = (ids: string[]) => call<(Row | null)[]>('rowsOf', { ids });
+/** Cards of many Scryfall ids at once, in order; null for an unknown id. `prices` adds `card.prices` (MTGJSON, needs the prices overlay). */
+export const getByKeys = (ids: string[], o: { prices?: boolean } = {}) => call<(Card | null)[]>('getByKeys', { ids, ...o });
+export const getByScryfallIds = getByKeys;
+/** Like registerSet but from rows (e.g. from `rowsOf`): `unknown` counts rows that do not exist or were removed. */
+export const registerRows = (name: string, rows: Row[]) => call<{ resolved: number; unknown: number }>('registerRows', { name, rows });
+export const dropSet = (name: string) => call<EngineInfo>('dropSet', { name });
+/** Persist all named sets to a file, and load them back after `open`. Sets from another dataset epoch (or a bad file) load as nothing: re-register from your own data. */
+export const saveSets = (path: string) => call<null>('saveSets', { path });
+export const loadSets = (path: string) => call<{ loaded: number }>('loadSets', { path });
 /** Scope searches to your own cards (collection, a tag, a deck): register Scryfall ids under a name. */
 export const registerSet = (name: string, ids: string[]) =>
   call<{ resolved: number; unknown: number }>('registerSet', { name, ids });

@@ -1,6 +1,6 @@
 //! On-device engine over a COQD dataset + COQI search index.
 //!
-//! API (see docs/engine.md): `open`, `search`, `getRecords` (= `getCards`), `getByKey` (= `getByScryfallId`), `registerSet`,
+//! API (see docs/engine.md): `open`, `search`, `getRecords` (= `getCards`), `getByKey` (= `getByScryfallId`), `getByKeys`, `rowsOf`, `registerSet`, `registerRows`, `dropSet`, `saveSets`, `loadSets`,
 //! `applyPatch`, `applyIndexDelta`, `attachOverlay`, `detachOverlay`, `getPrices`, `info`. `Engine::call` is the JSON dispatcher the C ABI (`ffi`) and the Expo module use.
 //! The dataset is held as a columnar `Store` (no per-record structs); the index is loaded from the `.coqi` when its
 //! dataset hash matches and its columns fit the tables, otherwise rebuilt (and the `.coqi` rewritten).
@@ -64,6 +64,10 @@ fn load_dataset(path: &Path, dialect: &dyn Dialect) -> Result<Loaded, String> {
     let st = coqd::read_store(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     let by_id = dialect.key_map(&st);
     Ok((st, Sha256::digest(&bytes).into(), by_id))
+}
+
+fn str_list(a: &Value, k: &str) -> Result<Vec<String>, String> {
+    Ok(a.get(k).and_then(Value::as_array).ok_or(format!("missing {k}"))?.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 }
 
 impl Engine {
@@ -218,6 +222,47 @@ impl Engine {
         (resolved, ids.len() - resolved)
     }
 
+    /// Rows of many keys at once (None = unknown key), in the order given.
+    pub fn rows_of(&self, keys: &[String]) -> Vec<Option<u32>> {
+        keys.iter().map(|k| self.row_of(k)).collect()
+    }
+
+    /// Register (or replace) a named scope from rows (e.g. from `rows_of`); out-of-range or removed rows are dropped and counted.
+    pub fn register_rows(&mut self, name: &str, rows: &[u32]) -> (usize, usize) {
+        let t = &self.store.tables[self.primary];
+        let mut v: Vec<u32> = rows.iter().copied().filter(|&r| t.tomb.get(r as usize).is_some_and(|d| !*d)).collect();
+        v.sort_unstable();
+        v.dedup();
+        let resolved = v.len();
+        self.sets.insert(name.to_string(), v);
+        (resolved, rows.len() - resolved)
+    }
+
+    /// Persist the named scopes (rows are stable across patches, not across epochs, so the epoch is stored with them).
+    pub fn save_sets(&self, path: &Path) -> Result<(), String> {
+        let sets: serde_json::Map<String, Value> = self.sets.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+        write_atomic(path, json!({"epoch": self.store.epoch, "sets": sets}).to_string().as_bytes())
+    }
+
+    /// Load scopes written by `save_sets`. A missing file, another epoch or unreadable content loads nothing (returns 0): the
+    /// caller re-registers from its own data. Existing scopes of the same name are replaced. Rows removed since are dropped.
+    pub fn load_sets(&mut self, path: &Path) -> usize {
+        let Ok(b) = std::fs::read(path) else { return 0 };
+        let Ok(v) = serde_json::from_slice::<Value>(&b) else { return 0 };
+        if v.get("epoch").and_then(Value::as_u64) != Some(self.store.epoch as u64) {
+            return 0;
+        }
+        let Some(m) = v.get("sets").and_then(Value::as_object) else { return 0 };
+        let mut n = 0;
+        for (k, rows) in m {
+            let Some(a) = rows.as_array() else { continue };
+            let rows: Vec<u32> = a.iter().filter_map(|r| r.as_u64().map(|r| r as u32)).collect();
+            self.register_rows(k, &rows);
+            n += 1;
+        }
+        n
+    }
+
     pub fn apply_patch(&mut self, patch_path: &Path) -> Result<(), String> {
         let old = std::fs::read(&self.coqd_path).map_err(|e| e.to_string())?;
         let p = std::fs::read(patch_path).map_err(|e| format!("{}: {e}", patch_path.display()))?;
@@ -304,6 +349,31 @@ impl Engine {
                 let id = s("id").or_else(|| s("key")).ok_or("missing id")?;
                 Ok(self.row_of(id).and_then(|r| self.card(r)).unwrap_or(Value::Null))
             }
+            "rowsOf" => {
+                let keys = str_list(a, "ids").or_else(|_| str_list(a, "keys"))?;
+                Ok(Value::Array(self.rows_of(&keys).into_iter().map(|r| r.map_or(Value::Null, |r| json!(r))).collect()))
+            }
+            "getByKeys" | "getByScryfallIds" => {
+                let keys = str_list(a, "ids").or_else(|_| str_list(a, "keys"))?;
+                let rows = self.rows_of(&keys);
+                let mut out: Vec<Value> = rows.iter().map(|r| r.and_then(|r| self.card(r)).unwrap_or(Value::Null)).collect();
+                if a.get("prices").and_then(Value::as_bool) == Some(true) {
+                    let rr: Vec<u32> = rows.iter().map(|r| r.unwrap_or(u32::MAX)).collect();
+                    self.add_prices(&rr, &mut out)?;
+                }
+                Ok(Value::Array(out))
+            }
+            "registerRows" => {
+                let rows: Vec<u32> = a.get("rows").and_then(Value::as_array).ok_or("missing rows")?.iter().filter_map(|v| v.as_u64().map(|r| r as u32)).collect();
+                let (resolved, unknown) = self.register_rows(s("name").ok_or("missing name")?, &rows);
+                Ok(json!({"resolved": resolved, "unknown": unknown}))
+            }
+            "dropSet" => {
+                self.sets.remove(s("name").ok_or("missing name")?);
+                Ok(self.info())
+            }
+            "saveSets" => self.save_sets(Path::new(s("path").ok_or("missing path")?)).map(|_| Value::Null),
+            "loadSets" => Ok(json!({"loaded": self.load_sets(Path::new(s("path").ok_or("missing path")?))})),
             "registerSet" => {
                 let ids: Vec<String> = a.get("ids").and_then(Value::as_array).ok_or("missing ids")?.iter().filter_map(|v| v.as_str().map(String::from)).collect();
                 let (resolved, unknown) = self.register_set(s("name").ok_or("missing name")?, &ids);
