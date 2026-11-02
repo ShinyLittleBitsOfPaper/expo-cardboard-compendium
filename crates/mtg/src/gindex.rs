@@ -384,6 +384,16 @@ impl Hooks for MtgHooks {
                     })
                 })
             }
+            // args: [overlay column, op, cents]; reads the `prices` overlay (row i = printing row i); no price never matches
+            "price" => {
+                let op = parse_op(&args[1])?;
+                let cents: i64 = args[2].parse().map_err(|_| "bad amount".to_string())?;
+                let st = ix.overlay("prices").ok_or("price search needs the prices overlay (attachOverlay)")?;
+                let (_, t) = st.table("price").ok_or("prices overlay has no price table")?;
+                let ci = st.schema.tables[0].columns.iter().position(|c| c.name == args[0]).ok_or("unknown price column")?;
+                let coqc_format::table::ColData::Int(col) = &t.cols[ci] else { return Err("bad price column".into()) };
+                ix.pred("printing", |i| col.get(i).copied().flatten().is_some_and(|c| num_cmp(c as f64, cents as f64, op)))
+            }
             // args: [op, canonical cost]
             "mana" => {
                 let op = parse_op(&args[0])?;
@@ -504,6 +514,7 @@ pub fn translate_expr(e: &Expr) -> GExpr {
             };
             GExpr::Custom { name: "stat".into(), args: vec![stat.clone(), op_sym(*op).into(), kind.into(), r] }
         }
+        Expr::Price { col, op, cents } => GExpr::Custom { name: "price".into(), args: vec![col.clone(), op_sym(*op).into(), cents.to_string()] },
         Expr::Mana { op, cost } => GExpr::Custom { name: "mana".into(), args: vec![op_sym(*op).into(), cost.clone()] },
         Expr::Legal { mode, format } => GExpr::Custom { name: "legal".into(), args: vec![mode.clone(), format.clone()] },
         Expr::Keyword(k) => GExpr::Custom { name: "keyword".into(), args: vec![k.clone()] },

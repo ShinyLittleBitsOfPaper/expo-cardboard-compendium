@@ -1,7 +1,7 @@
 //! On-device engine over a COQD dataset + COQI search index.
 //!
-//! API (see docs/engine.md): `open`, `search`, `getCards`, `getByScryfallId`, `registerSet`, `applyPatch`,
-//! `applyIndexDelta`, `info`. `Engine::call` is the JSON dispatcher the C ABI (`ffi`) and the Expo module use.
+//! API (see docs/engine.md): `open`, `search`, `getRecords` (= `getCards`), `getByKey` (= `getByScryfallId`), `registerSet`,
+//! `applyPatch`, `applyIndexDelta`, `attachOverlay`, `detachOverlay`, `info`. `Engine::call` is the JSON dispatcher the C ABI (`ffi`) and the Expo module use.
 //! The dataset is held as a columnar `Store` (no per-record structs); the index is loaded from the `.coqi` when its
 //! dataset hash matches and its columns fit the tables, otherwise rebuilt (and the `.coqi` rewritten).
 
@@ -33,6 +33,13 @@ pub struct Engine {
     /// the primary table (the one with a parent) and its parent's name
     primary: usize,
     parent: Option<String>,
+    overlays: Vec<(String, Overlay)>,
+}
+
+/// An attached overlay dataset (e.g. `prices`): row i of its first table belongs to row i of the primary table.
+struct Overlay {
+    store: Store,
+    sha: [u8; 32],
 }
 
 pub struct Page {
@@ -77,7 +84,7 @@ impl Engine {
             dialect,
             coqd_path: coqd.to_path_buf(),
             coqi_path: coqi_path.map(Path::to_path_buf),
-            store, dsha, parts: None, by_id, sets: HashMap::new(), index_source: "none", primary, parent,
+            store, dsha, parts: None, by_id, sets: HashMap::new(), index_source: "none", primary, parent, overlays: Vec::new(),
         };
         if let Some(p) = &e.coqi_path {
             if let Ok(b) = std::fs::read(p) {
@@ -116,9 +123,36 @@ impl Engine {
             q.scope = Some(self.sets.get(name).cloned().ok_or_else(|| format!("unknown set '{name}'"))?);
         }
         self.ensure_index()?;
-        let ix = GIndex::with_parts(&self.store, Some(self.dialect.hooks()), self.parts.as_ref().unwrap())?;
+        let ov: Vec<(String, &Store)> = self.overlays.iter().map(|(id, o)| (id.clone(), &o.store)).collect();
+        let ix = GIndex::with_parts(&self.store, Some(self.dialect.hooks()), self.parts.as_ref().unwrap())?.with_overlays(ov);
         let r = ix.search(&q)?;
         Ok(Page { total: r.total, rows: r.rows })
+    }
+
+    /// Attach (or replace) an overlay dataset from a `.coqd` file. It must belong to the open dataset's epoch, and its first table
+    /// must follow the primary table (`overlay_of` prop) or the sync layer has given the engine the wrong file.
+    pub fn attach_overlay(&mut self, id: &str, path: &Path) -> Result<(), String> {
+        if id.is_empty() {
+            return Err("missing overlay id".into());
+        }
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let store = coqd::read_store(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        if store.epoch != self.store.epoch {
+            return Err(format!("overlay {id} is for card epoch {}, the open dataset has {}", store.epoch, self.store.epoch));
+        }
+        if store.tables.is_empty() {
+            return Err(format!("overlay {id} has no table"));
+        }
+        let o = Overlay { store, sha: Sha256::digest(&bytes).into() };
+        match self.overlays.iter_mut().find(|(i, _)| i == id) {
+            Some(slot) => slot.1 = o,
+            None => self.overlays.push((id.to_string(), o)),
+        }
+        Ok(())
+    }
+
+    pub fn detach_overlay(&mut self, id: &str) {
+        self.overlays.retain(|(i, _)| i != id);
     }
 
     pub fn card(&self, row: u32) -> Option<Value> {
@@ -175,6 +209,7 @@ impl Engine {
             "oracleCards": self.parent.as_deref().and_then(|p| self.store.table(p)).map_or(0, |(_, t)| t.tomb.iter().filter(|t| !**t).count()),
             "datasetSha256": hex(&self.dsha),
             "index": self.index_source,
+            "overlays": self.overlays.iter().map(|(k, o)| (k.clone(), json!({"sha256": hex(&o.sha), "rows": o.store.tables[0].rows(), "sourceDate": o.store.source_date}))).collect::<serde_json::Map<_, _>>(),
             "sets": self.sets.iter().map(|(k, v)| (k.clone(), json!(v.len()))).collect::<serde_json::Map<_, _>>(),
         })
     }
@@ -195,12 +230,20 @@ impl Engine {
                 }
                 Ok(out)
             }
-            "getCards" => {
+            "attachOverlay" => {
+                self.attach_overlay(s("id").ok_or("missing id")?, Path::new(s("path").ok_or("missing path")?))?;
+                Ok(self.info())
+            }
+            "detachOverlay" => {
+                self.detach_overlay(s("id").ok_or("missing id")?);
+                Ok(self.info())
+            }
+            "getCards" | "getRecords" => {
                 let rows = a.get("rows").and_then(Value::as_array).ok_or("missing rows")?;
                 Ok(Value::Array(rows.iter().map(|r| r.as_u64().and_then(|r| self.card(r as u32)).unwrap_or(Value::Null)).collect()))
             }
-            "getByScryfallId" => {
-                let id = s("id").ok_or("missing id")?;
+            "getByScryfallId" | "getByKey" => {
+                let id = s("id").or_else(|| s("key")).ok_or("missing id")?;
                 Ok(self.row_of(id).and_then(|r| self.card(r)).unwrap_or(Value::Null))
             }
             "registerSet" => {

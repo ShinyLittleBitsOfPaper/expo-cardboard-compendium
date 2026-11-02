@@ -173,6 +173,8 @@ pub struct GIndex<'a> {
     /// per table: primary row -> row of that table (None for the primary itself or when unreachable)
     maps: Vec<Option<&'a [u32]>>,
     live_p: Bits,
+    /// attached overlay datasets (id, store); row i of an overlay table follows primary row i (see `overlay`)
+    overlays: Vec<(String, &'a Store)>,
 }
 
 fn mask_cmp(a: u32, b: u32, op: Op) -> bool {
@@ -303,6 +305,17 @@ impl<'a> GIndex<'a> {
         Self::assemble(store, hooks, Parts::Borrowed(parts))
     }
 
+    /// Attach overlay datasets (e.g. prices) for `Custom` predicates to read through [`GIndex::overlay`].
+    pub fn with_overlays(mut self, overlays: Vec<(String, &'a Store)>) -> Self {
+        self.overlays = overlays;
+        self
+    }
+
+    /// An attached overlay by id, if any.
+    pub fn overlay(&self, id: &str) -> Option<&'a Store> {
+        self.overlays.iter().find(|(i, _)| i == id).map(|(_, s)| *s)
+    }
+
     pub fn into_parts(self) -> Option<IndexParts> {
         match self.parts {
             Parts::Owned(p) => Some(p),
@@ -381,7 +394,7 @@ impl<'a> GIndex<'a> {
                 live_p.set(i);
             }
         }
-        Ok(GIndex { store, hooks, primary, parent_ref, parts, tlive, maps, live_p })
+        Ok(GIndex { store, hooks, primary, parent_ref, parts, tlive, maps, live_p, overlays: Vec::new() })
     }
 
     // ------------------------------------------------------------ helpers (also for dialect hooks) ---

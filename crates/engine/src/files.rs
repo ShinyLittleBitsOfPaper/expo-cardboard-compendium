@@ -66,13 +66,32 @@ pub fn move_file(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::rename(from, to).map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))
 }
 
-/// `sha256File {path}`, `unzstFile {path, out}`, `moveFile {from, to}` (atomic replace), `removeFile {path}` (missing is fine); `None` when `method` is not a file helper.
+/// Apply a `.coqp` to the dataset at `path`, writing the result to `out` (via `<out>.part`, then renamed). Needs no open engine,
+/// so overlays (prices) can be patched without loading the card data. Returns (sha256 hex, size) of the output.
+pub fn patch_file(path: &Path, patch: &Path, out: &Path) -> Result<(String, u64), String> {
+    let old = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let p = std::fs::read(patch).map_err(|e| format!("{}: {e}", patch.display()))?;
+    let new = coqc_format::patch::apply_patch(&old, &p)?;
+    let mut part = out.as_os_str().to_owned();
+    part.push(".part");
+    let part = std::path::PathBuf::from(part);
+    std::fs::write(&part, &new).map_err(|e| format!("{}: {e}", part.display()))?;
+    std::fs::rename(&part, out).map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok((hex(&Sha256::digest(&new)), new.len() as u64))
+}
+
+/// `sha256File {path}`, `unzstFile {path, out}`, `patchFile {path, patch, out}`, `moveFile {from, to}` (atomic replace), `removeFile {path}` (missing is fine); `None` when `method` is not a file helper.
 pub fn call(method: &str, a: &Value) -> Option<Result<Value, String>> {
     let s = |k: &str| a.get(k).and_then(Value::as_str).ok_or(format!("missing {k}"));
     match method {
         "sha256File" => Some(s("path").and_then(|p| sha256_file(Path::new(p))).map(|(h, n)| json!({"sha256": h, "size": n}))),
         "unzstFile" => Some(
             s("path").and_then(|p| s("out").and_then(|o| unzst_file(Path::new(p), Path::new(o)))).map(|(h, n)| json!({"sha256": h, "size": n})),
+        ),
+        "patchFile" => Some(
+            s("path")
+                .and_then(|p| s("patch").and_then(|q| s("out").and_then(|o| patch_file(Path::new(p), Path::new(q), Path::new(o)))))
+                .map(|(h, n)| json!({"sha256": h, "size": n})),
         ),
         "moveFile" => Some(s("from").and_then(|f| s("to").and_then(|t| move_file(Path::new(f), Path::new(t)))).map(|_| Value::Null)),
         "removeFile" => Some(s("path").and_then(|p| match std::fs::remove_file(p) {

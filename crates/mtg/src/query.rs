@@ -70,6 +70,9 @@ pub enum Expr {
     Artist(String),
     /// `ft:`: printing flavor text contains
     Flavor(String),
+    /// `usd`/`usdfoil`/`usdetched`/`eur`/`eurfoil`/`euretched` compared with an amount; `col` is a price overlay column
+    /// (`tcg_normal`, ...), `cents` the amount in cents. Needs the `prices` overlay attached to the engine.
+    Price { col: String, op: Op, cents: u32 },
     /// `is:` flag, canonical name from [`IS_O`] or [`IS_P`]
     Is(String),
 }

@@ -8,6 +8,8 @@ export interface EngineInfo {
   datasetSha256: string;
   index: 'coqi' | 'built' | 'delta' | 'stale';
   sets: Record<string, number>;
+  /** Attached overlays (prices, ...): file hash, row count, source date. */
+  overlays: Record<string, { sha256: string; rows: number; sourceDate: number }>;
 }
 export interface SearchOptions {
   limit?: number;
@@ -26,8 +28,18 @@ export const open = (coqd: string, coqi?: string) => call<EngineInfo>('open', { 
 export const close = () => call<null>('close');
 export const info = () => call<EngineInfo>('info');
 export const search = (query: string, o: SearchOptions = {}) => call<SearchResult>('search', { query, ...o });
-export const getCards = (rows: Row[]) => call<(Card | null)[]>('getCards', { rows });
-export const getByScryfallId = (id: string) => call<Card | null>('getByScryfallId', { id });
+/** Records (MTG: card JSON) for primary-table rows; null for a removed row. */
+export const getRecords = (rows: Row[]) => call<(Card | null)[]>('getRecords', { rows });
+/** One record by its natural key (MTG: Scryfall id), null when unknown. */
+export const getByKey = (key: string) => call<Card | null>('getByKey', { key });
+export const getCards = getRecords;
+export const getByScryfallId = getByKey;
+/**
+ * Attach an overlay dataset (a `.coqd` such as prices.coqd) so searches can use it (`usd>1`, `eur<=0.5`, `usdfoil`, ...).
+ * Re-attach after a sync replaced the file. Rejected when the overlay belongs to another card epoch.
+ */
+export const attachOverlay = (id: string, path: string) => call<EngineInfo>('attachOverlay', { id, path });
+export const detachOverlay = (id: string) => call<EngineInfo>('detachOverlay', { id });
 /** Scope searches to your own cards (collection, a tag, a deck): register Scryfall ids under a name. */
 export const registerSet = (name: string, ids: string[]) =>
   call<{ resolved: number; unknown: number }>('registerSet', { name, ids });
@@ -39,4 +51,4 @@ export const applyIndexDelta = (path: string) => call<EngineInfo>('applyIndexDel
 // --- Data sync (docs/roadmap.md, Milestone 2) -------------------------------------------------------------------
 export { dataPaths, DEFAULT_MANIFEST_URL } from './sync/run';
 export type { SyncOptions, SyncResult } from './sync/run';
-export { sync } from './sync/sync';
+export { sync, openSynced } from './sync/sync';

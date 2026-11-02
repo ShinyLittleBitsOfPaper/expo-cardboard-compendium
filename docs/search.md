@@ -75,6 +75,7 @@ S3d additions (0.0.2-23):
   mdfc dfc token planar scheme vanguard augment host. Derived masks `is_o`/`is_p`. permanent/spell/historic/vanilla/commander/hybrid are
   approximations; unknown values are errors.
 - `f:`/`format:`/`legal:` (legal **or restricted**, unverified vs Scryfall; `edh` = commander), `banned:`, `restricted:`; unknown format is a search error.
+- `usd` `usdfoil` `usdetched` (TCGplayer) and `eur` `eurfoil` `euretched` (Cardmarket) with `: = != < <= > >=` and an amount (`usd>=1.5`, `eur<0.5`): compare the printing's price in the attached `prices` overlay (the generic index exposes overlays to `Custom` predicates via `GIndex::overlay`). A printing without that price never matches; without the overlay attached the search fails with a clear error. Which provider/finish Scryfall maps to `usd` is not verified against Scryfall.
 - `kw:`/`keyword:` (exact, case-insensitive), `a:`/`artist:`, `ft:`/`flavor:` (substring scan of top-level printing fields; face-level artist/flavor not covered;
   `ft:` is the slowest, ~70 ms on 120k rows desktop), `order:mv`.
 - Index: four new derived columns (+1.15 MB raw, +0.1 MB zstd on synthetic 120k; old queries unchanged). `Hooks::required` makes an index built by an

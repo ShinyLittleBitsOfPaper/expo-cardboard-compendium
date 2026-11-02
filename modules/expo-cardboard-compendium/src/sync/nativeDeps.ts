@@ -37,6 +37,8 @@ export const nativeDeps: SyncDeps = {
     applyIndexDelta: (path) => call('applyIndexDelta', { path }),
     sha256File: (path) => call('sha256File', { path }),
     unzstFile: (path, out) => call('unzstFile', { path, out }),
+    patchFile: (path, patch, out) => call('patchFile', { path, patch, out }),
+    attachOverlay: (id, path) => call('attachOverlay', { id, path }),
     moveFile: (from, to) => call('moveFile', { from, to }),
     removeFile: (path) => call('removeFile', { path }),
   },

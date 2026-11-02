@@ -2,7 +2,7 @@
 // flow is testable with fakes (src/sync/__tests__). Invariant: a file only ever appears under its final name after its
 // SHA-256 was checked, and every swap is an atomic rename, so an interrupted sync leaves a working (older) dataset.
 
-import { parseManifest, resolve, SUPPORTED_MANIFEST_VERSION, type Asset, type Manifest } from './manifest';
+import { parseManifest, resolve, SUPPORTED_MANIFEST_VERSION, type Asset, type Link, type Manifest } from './manifest';
 import { planSync, MODULE_FORMAT, type CardStep, type FullReason, type LocalState, type ModuleFormat } from './plan';
 
 export const DEFAULT_MANIFEST_URL =
@@ -15,6 +15,9 @@ export interface EngineOps {
   applyIndexDelta(path: string): Promise<{ datasetSha256: string; index: string }>;
   sha256File(path: string): Promise<{ sha256: string; size: number }>;
   unzstFile(path: string, out: string): Promise<{ sha256: string; size: number }>;
+  /** Apply a .coqp to the file at `path`, writing `out`; needs no open engine (used for overlays). */
+  patchFile(path: string, patch: string, out: string): Promise<{ sha256: string; size: number }>;
+  attachOverlay(id: string, path: string): Promise<unknown>;
   moveFile(from: string, to: string): Promise<void>;
   removeFile(path: string): Promise<void>;
 }
@@ -95,7 +98,7 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
   const manifest: Manifest = parseManifest(rawManifest);
   const { cards, index, overlays } = resolve(manifest);
   let local = parseState(await deps.readText(paths.state));
-  const plan = planSync(manifest, local, o.moduleFormat ?? MODULE_FORMAT);
+  const plan = planSync(manifest, local, o.moduleFormat ?? MODULE_FORMAT, { patchOverlays: true });
   if (plan.status === 'needs_app_update') {
     return { status: 'needs_app_update', patches: 0, overlays: 'unchanged', changed: false, required: plan.required };
   }
@@ -195,17 +198,71 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
   }
 
   let updated: SyncResult['overlays'] = 'unchanged';
+  /** Apply the overlay's patch chain to the file on disk (no engine needed), verifying the end result. */
+  const patchOverlay = async (id: string, steps: Link[], want: Asset) => {
+    const cur = paths.overlay(id);
+    let from = cur;
+    for (const [i, s] of steps.entries()) {
+      progress(`${id} ${s.to}`, i + 1, steps.length);
+      const p = await fetchVerified(s.patch, `${id}.coqp.part`);
+      const out = tmp(`${id}.coqd.${i % 2}.part`);
+      try {
+        await engine.patchFile(from, p, out);
+      } finally {
+        await engine.removeFile(p);
+      }
+      if (from !== cur) await engine.removeFile(from);
+      from = out;
+    }
+    const got = await engine.sha256File(from);
+    if (got.sha256 !== want.sha256 || got.size !== want.size) {
+      await engine.removeFile(from);
+      throw new Error(`${id}: patched file does not match the published one`);
+    }
+    await engine.moveFile(from, cur);
+  };
   for (const d of overlays) {
     const op = plan.overlays[d.id];
     if (!op || op.kind === 'up_to_date') continue;
-    // Overlays come as full files until the engine applies .coqp to them (PlanOptions.patchOverlays).
-    progress(d.id, 1, 1);
-    const p = await fetchVerified(d.file, `${d.id}.coqd.part`);
-    await engine.moveFile(p, paths.overlay(d.id));
+    if (op.kind === 'patch') {
+      try {
+        await patchOverlay(d.id, op.steps, d.file);
+      } catch {
+        // A bad patch must not strand the user: the full file is small.
+        const p = await fetchVerified(d.file, `${d.id}.coqd.part`);
+        await engine.moveFile(p, paths.overlay(d.id));
+      }
+    } else {
+      progress(d.id, 1, 1);
+      const p = await fetchVerified(d.file, `${d.id}.coqd.part`);
+      await engine.moveFile(p, paths.overlay(d.id));
+    }
     await saveState({ ...local!, overlays: { ...local!.overlays, [d.id]: d.stamp } });
     updated = 'updated';
   }
 
   const changed = status !== 'up_to_date' || updated === 'updated';
   return { status, patches, overlays: updated, changed, ...(reason ? { reason } : {}) };
+}
+
+/**
+ * Open the synced data in the engine: the cards dataset + index, then every overlay recorded in state.json (prices, ...).
+ * Call after `sync` (when `changed`) and at app start. Overlays that fail to attach are skipped and returned in `failed`.
+ */
+export async function openLocal(deps: SyncDeps, dir: string): Promise<{ attached: string[]; failed: string[] }> {
+  const paths = dataPaths(dir);
+  const state = parseState(await deps.readText(paths.state));
+  if (!state) throw new Error('no synced data: run sync first');
+  await deps.engine.open(paths.coqd, paths.coqi);
+  const attached: string[] = [];
+  const failed: string[] = [];
+  for (const id of Object.keys(state.overlays)) {
+    try {
+      await deps.engine.attachOverlay(id, paths.overlay(id));
+      attached.push(id);
+    } catch {
+      failed.push(id);
+    }
+  }
+  return { attached, failed };
 }

@@ -150,3 +150,65 @@ fn file_helpers_hash_and_unzstd() {
         assert!(r["ok"].is_null());
     }
 }
+
+#[test]
+fn price_overlay_attach_search_and_patch_file() {
+    use coqc_mtg::prices::PriceTable;
+    let dir = tmp("p");
+    let (a, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
+    let (bytes, _) = write(&a).unwrap();
+    let (coqd, coqi_p, pr) = (dir.join("c.coqd"), dir.join("c.coqi"), dir.join("prices.coqd"));
+    std::fs::write(&coqd, &bytes).unwrap();
+    let st = coqc_format::coqd::read_store(&bytes).unwrap();
+    let rows = st.table("printing").unwrap().1.rows();
+    let mk = |bump: u32| {
+        let mut t = PriceTable::new(st.epoch, 20261101, rows);
+        for i in 0..rows {
+            if i % 2 == 0 {
+                t.cols[0][i] = 1 + 50 + (i as u32) * 100 + bump; // tcg_normal cents + 1 (0 = no price)
+            }
+            if i % 3 == 0 {
+                t.cols[3][i] = 1 + 80; // cm_normal EUR 0.80
+            }
+        }
+        t
+    };
+    let (p1, p2) = (mk(0), mk(500));
+    let (b1, b2) = (p1.encode().unwrap(), p2.encode().unwrap());
+    std::fs::write(&pr, &b1).unwrap();
+
+    let mut e = Engine::open(&coqd, Some(&coqi_p)).unwrap();
+    // without the overlay a price query says so instead of matching nothing
+    assert!(e.call("search", &json!({"query": "usd>1"})).unwrap_err().contains("prices overlay"));
+    let a = e.call("attachOverlay", &json!({"id": "prices", "path": pr})).unwrap();
+    assert_eq!(a["overlays"]["prices"]["rows"], rows);
+    let count = |t: &PriceTable, col: usize, f: &dyn Fn(u32) -> bool| (0..rows).filter(|&i| t.cents(i, col).is_some_and(f)).count() as u64;
+    let q = |e: &mut Engine, s: &str| e.call("search", &json!({"query": format!("{s} include:extras")})).unwrap()["total"].as_u64().unwrap();
+    assert_eq!(q(&mut e, "usd>1"), count(&p1, 0, &|c| c > 100));
+    assert_eq!(q(&mut e, "usd<=0.5"), count(&p1, 0, &|c| c <= 50));
+    assert_eq!(q(&mut e, "eur=0.8"), count(&p1, 3, &|c| c == 80));
+    assert_eq!(q(&mut e, "usdfoil>0"), 0, "no foil prices at all");
+    assert_eq!(q(&mut e, "usd>1 usd<=0.5"), 0);
+
+    // patch the overlay file without an engine, re-attach: new prices, byte-identical to a fresh encode
+    let (patch, _) = coqc::patch::make_patch(&b1, &b2).unwrap();
+    let pp = dir.join("p.coqp");
+    std::fs::write(&pp, patch).unwrap();
+    let out = dir.join("prices.next");
+    let r = coqe::files::call("patchFile", &json!({"path": pr, "patch": pp, "out": out})).unwrap().unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b2);
+    assert_eq!(r["size"], b2.len());
+    std::fs::rename(&out, &pr).unwrap();
+    e.call("attachOverlay", &json!({"id": "prices", "path": pr})).unwrap();
+    assert_eq!(q(&mut e, "usd>1"), count(&p2, 0, &|c| c > 100));
+
+    // an overlay of another epoch is refused; detaching restores the error
+    let mut other = mk(0);
+    other.cards_epoch += 1;
+    std::fs::write(dir.join("o.coqd"), other.encode().unwrap()).unwrap();
+    assert!(e.call("attachOverlay", &json!({"id": "x", "path": dir.join("o.coqd")})).unwrap_err().contains("epoch"));
+    e.call("detachOverlay", &json!({"id": "prices"})).unwrap();
+    assert!(e.call("search", &json!({"query": "usd>1"})).is_err());
+    // generic aliases
+    assert!(e.call("getRecords", &json!({"rows": [0]})).unwrap()[0].is_object());
+}

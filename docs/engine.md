@@ -8,11 +8,13 @@ updates. The only native entry point is the C ABI in `ffi.rs`: `coqe_call(method
 |---|---|---|
 | `open` | `coqd`, `coqi?` | info. `.coqi` used only if its header dataset hash matches the `.coqd`; otherwise rebuilt and rewritten |
 | `search` | `query`, `limit?`, `offset?`, `scope?`, `cards?` | `{total, rows, cards?}`; rows are printing rows (stable, append-only) |
-| `getCards` | `rows[]` | card JSON per row (`null` if tombstoned/out of range) |
-| `getByScryfallId` | `id` | card JSON or `null` |
+| `getRecords` (alias `getCards`) | `rows[]` | record JSON per row (MTG: card JSON; `null` if tombstoned/out of range) |
+| `getByKey` (alias `getByScryfallId`) | `key` (or `id`) | record by natural key (MTG: Scryfall id) or `null` |
+| `attachOverlay` | `id`, `path` (.coqd) | attaches (or replaces) an overlay dataset, e.g. `prices`; refused when its epoch differs from the open dataset. `info.overlays` lists id -> `{sha256, rows, sourceDate}`. Re-attach after a sync replaced the file |
+| `detachOverlay` | `id` | removes it again |
 | `registerSet` | `name`, `ids[]` | `{resolved, unknown}`; later `search {scope: name}` can only match those printings |
 | `applyPatch` | `path` (.coqp) | replaces the .coqd atomically; index marked `stale` |
-| `sha256File` / `unzstFile` / `moveFile` / `removeFile` | `path` (`out`, `from`/`to`) | stateless (no open engine): streamed SHA-256, zstd decompress to a file, atomic replace, delete (missing is fine); used by `sync()` |
+| `sha256File` / `unzstFile` / `patchFile` / `moveFile` / `removeFile` | `path` (`out`, `patch`, `from`/`to`) | stateless (no open engine): streamed SHA-256, zstd decompress to a file, atomic replace, delete (missing is fine); used by `sync()`; `patchFile {path, patch, out}` applies a `.coqp` to a file without an open engine (overlay updates) |
 | `applyIndexDelta` | `path` (.coqid) | refused unless it targets the current dataset hash; on failure the next search rebuilds |
 | `info` / `close` | | |
 

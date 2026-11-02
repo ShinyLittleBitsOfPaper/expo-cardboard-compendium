@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { parseManifest, resolve, type Dataset, type Manifest } from '../manifest';
 import { planSync, planBytes, MODULE_FORMAT, type CardsPlan, type LocalState } from '../plan';
-import { runSync, dataPaths, type SyncDeps } from '../run';
+import { runSync, dataPaths, openLocal, type SyncDeps } from '../run';
 
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const DIR = '/data/cc';
@@ -14,6 +14,7 @@ const P = dataPaths(DIR);
 // `IDX:` + dataset; zst is `ZST!` + bytes.
 const dataset = (day: number, pad = 0) => Buffer.from(`dataset-day-${day}-` + 'x'.repeat(pad));
 const SERVER = 'https://example.test/d';
+const PAD = 'x'.repeat(60); // overlay files are bigger than a patch, so the planner prefers patches
 
 interface Release {
   manifest: Manifest;
@@ -25,7 +26,7 @@ function asset(files: Map<string, Buffer>, tag: string, name: string, body: Buff
   return { name, url, size: body.length, sha256: sha(body) };
 }
 /** Release for `day`, with patch links from `chainFrom` days (each carrying an index delta unless noDelta). */
-function release(day: number, o: { chainFrom?: number[]; epoch?: number; pad?: number; noDelta?: boolean; minCoqd?: number; corrupt?: string; extraOverlay?: boolean } = {}): Release {
+function release(day: number, o: { chainFrom?: number[]; epoch?: number; pad?: number; noDelta?: boolean; minCoqd?: number; corrupt?: string; extraOverlay?: boolean; overlayChain?: number[] } = {}): Release {
   const files = new Map<string, Buffer>();
   const d = dataset(day, o.pad ?? 5000);
   const idxRaw = Buffer.concat([Buffer.from('IDX:'), d]);
@@ -36,7 +37,8 @@ function release(day: number, o: { chainFrom?: number[]; epoch?: number; pad?: n
   const chain = o.chainFrom ?? [];
   const overlay = (id: string, stamp: string): Dataset => ({
     id, role: 'overlay', of: 'cards', stamp, format: 3, min_client_format: 3,
-    file: asset(files, 'data-latest', `${id}-${stamp}.coqd`, Buffer.from(`${id}-${day}`)), raw: null, patches: [],
+    file: asset(files, 'data-latest', `${id}-${stamp}.coqd`, Buffer.from(`${id}-${day}${PAD}`)), raw: null,
+    patches: (o.overlayChain ?? []).map((from) => link(id, 'coqp', from, `OPATCH:${from + 1}`)).map((l) => ({ ...l, from: l.from.replace('S', stamp[0]), to: l.to.replace('S', stamp[0]) })),
   });
   const datasets: Dataset[] = [
     {
@@ -118,6 +120,22 @@ function world(rel: Release) {
         const raw = b.subarray(4);
         fs.set(out, Buffer.from(raw));
         return { sha256: sha(raw), size: raw.length };
+      },
+      async patchFile(path, patch, out) {
+        const base = fs.get(path);
+        const pb = fs.get(patch);
+        if (!base || !pb || !pb.subarray(0, 6).equals(Buffer.from('OPATCH'))) throw new Error('bad overlay patch');
+        // fake overlay patch: `OPATCH:<n>` turns the file into `<id>-<n>`
+        const id = out.split('/').pop()!.split('.')[0];
+        const nb = Buffer.from(`${id}-${pb.subarray(7).toString()}${PAD}`);
+        fs.set(out, nb);
+        log.push(`patchFile ${id}`);
+        return { sha256: sha(nb), size: nb.length };
+      },
+      async attachOverlay(id, path) {
+        if (!fs.has(path)) throw new Error('no overlay file');
+        log.push(`attach ${id}`);
+        return null;
       },
       async moveFile(from, to) {
         const b = fs.get(from) ?? (text.has(from) ? Buffer.from(text.get(from)!) : undefined);
@@ -219,7 +237,7 @@ test('sync: first install downloads, verifies, unpacks the index and records sta
   assert.deepEqual([r.status, r.reason, r.overlays, r.changed], ['full', 'no_local_data', 'updated', true]);
   assert.deepEqual(w.fs.get(P.coqd), dataset(1, 5000));
   assert.deepEqual(w.fs.get(P.coqi), Buffer.concat([Buffer.from('IDX:'), dataset(1, 5000)]));
-  assert.deepEqual(w.fs.get(P.overlay('prices')), Buffer.from('prices-1'));
+  assert.deepEqual(w.fs.get(P.overlay('prices')), Buffer.from('prices-1' + PAD));
   assert.deepEqual(JSON.parse(w.text.get(P.state)!), state(1));
   assert.deepEqual(noTemp(w.fs), []);
   assert.ok(![...w.fs.keys()].some((k) => k.endsWith('.zst.part')));
@@ -319,9 +337,49 @@ test('sync: a second overlay is downloaded like prices, and a new epoch forgets 
   const w = world(release(1, { extraOverlay: true }));
   const r = await runSync(w.deps, { dir: DIR });
   assert.equal(r.overlays, 'updated');
-  assert.deepEqual(w.fs.get(P.overlay('rulings')), Buffer.from('rulings-1'));
+  assert.deepEqual(w.fs.get(P.overlay('rulings')), Buffer.from('rulings-1' + PAD));
   assert.deepEqual(JSON.parse(w.text.get(P.state)!).overlays, { prices: 'P1', rulings: 'R1' });
   w.setRelease(release(2, { epoch: 2 })); // rulings overlay gone from the manifest
   await runSync(w.deps, { dir: DIR });
   assert.deepEqual(JSON.parse(w.text.get(P.state)!).overlays, { prices: 'P2' });
+});
+
+test('sync: overlays are patched on disk without the engine, verified, then idempotent', async () => {
+  const w = world(release(1));
+  await runSync(w.deps, { dir: DIR });
+  w.setRelease(release(3, { chainFrom: [1, 2], overlayChain: [1, 2], pad: 5000 }));
+  // make the overlay patches cheaper than the full file so the planner picks them
+  w.log.length = 0;
+  const r = await runSync(w.deps, { dir: DIR });
+  assert.equal(r.overlays, 'updated');
+  assert.deepEqual(w.log.filter((l) => l.startsWith('patchFile')), ['patchFile prices', 'patchFile prices']);
+  assert.ok(!w.log.includes('DL prices-P3.coqd'));
+  assert.deepEqual(w.fs.get(P.overlay('prices')), Buffer.from('prices-3' + PAD));
+  assert.deepEqual(JSON.parse(w.text.get(P.state)!).overlays, { prices: 'P3' });
+  assert.deepEqual(noTemp(w.fs), []);
+});
+
+test('sync: a bad overlay patch falls back to the full overlay file', async () => {
+  const w = world(release(1));
+  await runSync(w.deps, { dir: DIR });
+  const rel = release(2, { chainFrom: [1], overlayChain: [1] });
+  const pa = rel.manifest.datasets[2].patches[0].patch;
+  rel.files.set(pa.url, Buffer.from('OPATCH:99')); // applies, but to the wrong content
+  pa.sha256 = sha(Buffer.from('OPATCH:99'));
+  pa.size = 9;
+  w.setRelease(rel);
+  await runSync(w.deps, { dir: DIR });
+  assert.deepEqual(w.fs.get(P.overlay('prices')), Buffer.from('prices-2' + PAD));
+  assert.deepEqual(noTemp(w.fs), []);
+});
+
+test('openLocal: opens the dataset and attaches every overlay in state', async () => {
+  const w = world(release(1, { extraOverlay: true }));
+  await runSync(w.deps, { dir: DIR });
+  w.log.length = 0;
+  const r = await openLocal(w.deps, DIR);
+  assert.deepEqual([r.attached.sort(), r.failed], [['prices', 'rulings'], []]);
+  w.fs.delete(P.overlay('rulings'));
+  assert.deepEqual((await openLocal(w.deps, DIR)).failed, ['rulings']);
+  await assert.rejects(openLocal(world(release(1)).deps, '/nowhere'), /run sync first/);
 });

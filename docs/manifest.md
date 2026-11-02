@@ -20,4 +20,4 @@ Written by `coqc manifest` (`crates/compiler/src/manifest.rs`), published last o
 CLI: `coqc manifest --base cards=F[,patch=P] --index cards-index=F.zst,of=cards,prefix=cards-[,patch=D] --overlay prices=F,of=cards[,patch=P] --run TAG --at ISO --keep-since ISO (--repo O/R | --base-url U) [--prev M] [--rebase] -o manifest.json`.
 Stdout ends with `latest:` (full files for data-latest) and `run:` (patch files for the run release) lines read by `data-publish.sh`.
 
-Status: Rust side done (S4b, 0.0.2-25); TypeScript sync reads v2 (S4c part 1, 0.0.2-26: `src/sync/`, overlays as full files, `<id>.coqd` on the device, `state.json` has `overlays`). Overlay patching and the engine reading overlays: S4c part 2.
+Status: Rust side done (S4b, 0.0.2-25); TypeScript sync reads v2 (S4c part 1, 0.0.2-26: `src/sync/`, overlays as full files, `<id>.coqd` on the device, `state.json` has `overlays`). S4c part 2 (0.0.2-27): overlays are patched on disk (`patchFile`, full-file fallback on any failure) and the engine attaches them (`openSynced`).

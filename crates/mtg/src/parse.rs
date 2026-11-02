@@ -244,6 +244,21 @@ impl P {
                 };
                 Expr::Stat { stat: stat.into(), op, rhs }
             }
+            "usd" | "usdfoil" | "usdetched" | "eur" | "eurfoil" | "euretched" => {
+                let col = match key {
+                    "usd" => "tcg_normal",
+                    "usdfoil" => "tcg_foil",
+                    "usdetched" => "tcg_etched",
+                    "eur" => "cm_normal",
+                    "eurfoil" => "cm_foil",
+                    _ => "cm_etched",
+                };
+                let amount: f64 = v.parse().map_err(|_| ParseError(format!("bad amount: {v}")))?;
+                if !amount.is_finite() || amount < 0.0 || amount > 1.0e7 {
+                    return err(format!("bad amount: {v}"));
+                }
+                Expr::Price { col: col.into(), op, cents: (amount * 100.0).round() as u32 }
+            }
             "m" | "mana" => Expr::Mana { op, cost: norm_mana(v)? },
             "f" | "format" | "legal" => { text_op(op)?; Expr::Legal { mode: "legal".into(), format: format_name(v) } }
             "banned" => { text_op(op)?; Expr::Legal { mode: "banned".into(), format: format_name(v) } }
