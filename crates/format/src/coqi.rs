@@ -51,7 +51,7 @@ fn w_arena(a: &Arena) -> Vec<u8> {
 fn r_arena(b: &[u8]) -> Result<Arena> {
     let mut r = Reader::new(b);
     let n = r.u32()? as usize;
-    let mut off = Vec::with_capacity(n);
+    let mut off = Vec::with_capacity(r.cap(n));
     for _ in 0..n {
         off.push(r.u32()?);
     }
@@ -343,6 +343,9 @@ fn apply_rows(old: &[Vec<u8>], r: &mut Reader) -> Result<Vec<Vec<u8>>> {
         return Err(Error::Corrupt("delta shrinks rows"));
     }
     let mut rows: Vec<Vec<u8>> = old.to_vec();
+    if n - old.len() > r.remaining() {
+        return Err(Error::Corrupt("delta row count exceeds its size"));
+    }
     rows.resize(n, Vec::new());
     let mut prev = 0usize;
     for _ in 0..r.uvarint()? {

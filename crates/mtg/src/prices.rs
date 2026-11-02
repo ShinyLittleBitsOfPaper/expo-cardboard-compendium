@@ -135,9 +135,9 @@ pub fn load_idmap(b: &[u8]) -> Result<HashMap<Id, Id>, Error> {
         return Err(Error::BadMagic);
     }
     let (n, raw_len) = (r.u32()? as usize, r.u32()? as usize);
-    let raw = zstd::bulk::decompress(r.take(b.len() - 12)?, raw_len).map_err(|e| Error::Zstd(e.to_string()))?;
+    let raw = coqc_format::codec::zstd_exact(r.take(b.len() - 12)?, raw_len).map_err(Error::Zstd)?;
     let mut rr = Reader::new(&raw);
-    let mut m = HashMap::with_capacity(n);
+    let mut m = HashMap::with_capacity(rr.cap(n));
     for _ in 0..n {
         let a: Id = rr.take(16)?.try_into().unwrap();
         let b: Id = rr.take(16)?.try_into().unwrap();

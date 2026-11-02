@@ -144,7 +144,7 @@ pub fn apply_patch(old_bytes: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
         return Err("unsupported patch version".into());
     }
     let rawlen = r.u32().map_err(e)? as usize;
-    let body = zstd::bulk::decompress(&patch[10..], rawlen).map_err(|x| x.to_string())?;
+    let body = crate::codec::zstd_exact(&patch[10..], rawlen)?;
     let mut r = Reader::new(&body);
     let old_sha: [u8; 32] = r.take(32).map_err(e)?.try_into().unwrap();
     let new_sha: [u8; 32] = r.take(32).map_err(e)?.try_into().unwrap();
@@ -157,6 +157,10 @@ pub fn apply_patch(old_bytes: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
     let old_rows: Vec<usize> = st.tables.iter().map(|t| t.rows()).collect();
     // rows not supplied by the patch stay unchanged; new rows start as zero-key tombstone placeholders
     for (t, n) in st.tables.iter_mut().zip(&meta.counts) {
+        // every new row costs the patch at least a byte, so a larger count is corrupt (and must not allocate billions of rows)
+        if (*n as usize).saturating_sub(t.rows()) > r.remaining() {
+            return Err("patch row count exceeds its size".into());
+        }
         while t.rows() < *n as usize {
             t.push_default();
         }
@@ -176,7 +180,7 @@ pub fn apply_patch(old_bytes: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
                 t.tomb.push(old.wrapping_add(unzz(r.uvarint().map_err(e)?)) != 0);
             }
             for c in 0..def.columns.len() {
-                let mut v = Vec::with_capacity(n);
+                let mut v = Vec::with_capacity(r.cap(n));
                 for i in 0..n {
                     let old = if i < o { code(int_col(&st.tables[ti], c)[i]) } else { 0 };
                     v.push(uncode(old.wrapping_add(unzz(r.uvarint().map_err(e)?))));

@@ -89,6 +89,14 @@ impl<'a> Reader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
+    /// Bytes left. Every encoded element takes at least one byte, so a count larger than this is corrupt: use `cap` to size
+    /// allocations from untrusted counts (a flipped length byte must not turn into a multi-GB allocation).
+    pub fn remaining(&self) -> usize {
+        self.data.len().saturating_sub(self.pos)
+    }
+    pub fn cap(&self, n: usize) -> usize {
+        n.min(self.remaining())
+    }
     pub fn is_empty(&self) -> bool {
         self.pos >= self.data.len()
     }
@@ -155,4 +163,23 @@ impl<'a> Reader<'a> {
     pub fn uuid(&mut self) -> Result<[u8; 16]> {
         Ok(self.take(16)?.try_into().unwrap())
     }
+}
+
+/// Largest decompressed section/patch/map this build accepts (real data is tens of MB).
+pub const MAX_RAW: usize = 512 << 20;
+
+/// zstd-decompress `comp`, which must expand to exactly `rawlen` bytes. Unlike `zstd::bulk::decompress(data, rawlen)` this does not
+/// allocate `rawlen` bytes up front, so a corrupt length field cannot trigger a huge allocation; output is also capped at `MAX_RAW`.
+pub fn zstd_exact(comp: &[u8], rawlen: usize) -> std::result::Result<Vec<u8>, String> {
+    use std::io::Read;
+    if rawlen > MAX_RAW {
+        return Err(format!("decompressed size {rawlen} exceeds the limit"));
+    }
+    let mut d = zstd::stream::read::Decoder::new(comp).map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(rawlen.min(comp.len().saturating_mul(8)));
+    d.by_ref().take(rawlen as u64 + 1).read_to_end(&mut out).map_err(|e| e.to_string())?;
+    if out.len() != rawlen {
+        return Err(format!("decompressed {} bytes, expected {rawlen}", out.len()));
+    }
+    Ok(out)
 }

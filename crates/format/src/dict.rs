@@ -52,7 +52,7 @@ impl Dict {
     }
     pub fn decode(r: &mut Reader) -> Result<Self> {
         let n = r.uvarint()? as usize;
-        let mut v = Vec::with_capacity(n);
+        let mut v = Vec::with_capacity(r.cap(n));
         for _ in 0..n {
             v.push(r.string()?);
         }

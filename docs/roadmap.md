@@ -80,7 +80,7 @@ failure, never leave the app without a working dataset. Planning logic is pure a
 2. Prices in the engine (done 0.0.2-27/28: `attachOverlay`, `getPrices(rows)`, overlay patching via `patchFile`, price terms `usd>=`, `eur<` in search; source is MTGJSON only).
 3. Batch helpers for user data (done 0.0.2-29): `getByKeys(ids[])`, `rowsOf(ids[])`, `registerRows`, `dropSet`, `saveSets`/`loadSets`; row tombstones surface as `null`.
 4. Sort and uniqueness controls slbop needs (done 0.0.2-30, see docs/search.md "slbop's queries"): slbop issues no `prefer:`; its list is `unique:prints include:extras order:released direction:desc`; `commander:` alias added; `adaptAppQuery` covers `tag:` and `set#number`.
-5. Robustness: fuzz/malformed-input tests for every reader (`.coqd/.coqi/.coqr` and all patch formats), no panics across the C ABI.
+5. Robustness (done 0.0.2-31, `crates/engine/tests/fuzz.rs`): fuzz/malformed-input tests for every reader and patch format and the C ABI; found and fixed unbounded allocations.
 6. iOS: build the xcframework (macOS runner capacity; retry or another runner label), then build it in an iOS app once.
 7. Conformance corpus: a few hundred queries whose result sets are compared against Scryfall's own search on the same day (rate-limited,
    with a UA), run on demand; the list of known differences goes in `docs/search.md`.

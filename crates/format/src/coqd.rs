@@ -179,7 +179,7 @@ pub fn decode_row(def: &TableDef, t: &mut Table, r: &mut Reader) -> Result<()> {
                 v.push(if n == 0 {
                     None
                 } else {
-                    let mut s = Vec::with_capacity(n - 1);
+                    let mut s = Vec::with_capacity(r.cap(n - 1));
                     for _ in 0..n - 1 {
                         s.push(r.uvarint32()?);
                     }
@@ -240,11 +240,11 @@ pub fn decode_meta(schema: &Schema, r: &mut Reader) -> Result<MetaBlock> {
         dicts.push(Dict::decode(r)?);
     }
     let n = r.uvarint()? as usize;
-    let mut props = Vec::with_capacity(n);
+    let mut props = Vec::with_capacity(r.cap(n));
     for _ in 0..n {
         let k = r.string()?;
         let m = r.uvarint()? as usize;
-        let mut v = Vec::with_capacity(m);
+        let mut v = Vec::with_capacity(r.cap(m));
         for _ in 0..m {
             v.push(r.string()?);
         }
@@ -326,7 +326,7 @@ fn decode_columnar(def: &TableDef, sec: &[u8], count: usize) -> Result<Table> {
     if n != count {
         return Err(Error::Corrupt("row count mismatch"));
     }
-    let raw = zstd::bulk::decompress(&sec[8..], rawlen).map_err(|e| Error::Zstd(e.to_string()))?;
+    let raw = crate::codec::zstd_exact(&sec[8..], rawlen).map_err(Error::Zstd)?;
     let mut br = Reader::new(&raw);
     let mut t = Table::new(def);
     for _ in 0..n {
@@ -430,7 +430,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed<'_>> {
         return Err(Error::Unsupported(min_reader));
     }
     let n = r.u32()? as usize;
-    let mut sections = Vec::with_capacity(n);
+    let mut sections = Vec::with_capacity(r.cap(n));
     for _ in 0..n {
         let (kind, arg) = (r.u32()?, r.u32()?);
         let off = r.u64()? as usize;
@@ -455,7 +455,7 @@ pub fn block_table(bytes: &[u8], table: &str) -> Result<Vec<BlockInfo>> {
     let mut r = Reader::new(p.rows(ti as u32)?);
     let _per = r.u32()?;
     let n = r.u32()? as usize;
-    let mut v = Vec::with_capacity(n);
+    let mut v = Vec::with_capacity(r.cap(n));
     for _ in 0..n {
         let off = r.u64()?;
         let clen = r.u32()?;
@@ -470,7 +470,7 @@ fn decode_blocks(def: &TableDef, sec: &[u8], count: usize) -> Result<Table> {
     let mut r = Reader::new(sec);
     let _per = r.u32()?;
     let n = r.u32()? as usize;
-    let mut blocks = Vec::with_capacity(n);
+    let mut blocks = Vec::with_capacity(r.cap(n));
     for _ in 0..n {
         let off = r.u64()? as usize;
         let clen = r.u32()? as usize;
@@ -483,7 +483,7 @@ fn decode_blocks(def: &TableDef, sec: &[u8], count: usize) -> Result<Table> {
     for (off, clen, rawlen) in blocks {
         let start = data_start + off;
         let comp = sec.get(start..start + clen).ok_or(Error::Corrupt("block out of range"))?;
-        let raw = zstd::bulk::decompress(comp, rawlen).map_err(|e| Error::Zstd(e.to_string()))?;
+        let raw = crate::codec::zstd_exact(comp, rawlen).map_err(Error::Zstd)?;
         let mut br = Reader::new(&raw);
         while !br.is_empty() {
             let len = br.uvarint()? as usize;

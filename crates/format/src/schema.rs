@@ -203,12 +203,12 @@ impl Schema {
         let id = r.string()?;
         let version = r.u32()?;
         let n = r.uvarint()? as usize;
-        let mut dicts = Vec::with_capacity(n);
+        let mut dicts = Vec::with_capacity(r.cap(n));
         for _ in 0..n {
             dicts.push(r.string()?);
         }
         let n = r.uvarint()? as usize;
-        let mut tables = Vec::with_capacity(n);
+        let mut tables = Vec::with_capacity(r.cap(n));
         for _ in 0..n {
             let name = r.string()?;
             let tag = r.u8()?;
@@ -221,7 +221,7 @@ impl Schema {
             };
             let key = r.opt_string()?;
             let nc = r.uvarint()? as usize;
-            let mut columns = Vec::with_capacity(nc);
+            let mut columns = Vec::with_capacity(r.cap(nc));
             for _ in 0..nc {
                 let cname = r.string()?;
                 let ty = match r.u8()? {
@@ -246,7 +246,7 @@ impl Schema {
                     _ => return Err(Error::Corrupt("bad index kind")),
                 };
                 let na = r.uvarint()? as usize;
-                let mut aliases = Vec::with_capacity(na);
+                let mut aliases = Vec::with_capacity(r.cap(na));
                 for _ in 0..na {
                     aliases.push(r.string()?);
                 }
