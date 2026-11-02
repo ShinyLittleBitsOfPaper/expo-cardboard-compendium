@@ -77,7 +77,7 @@ failure, never leave the app without a working dataset. Planning logic is pure a
 ## Milestone 3: engine completeness and measurements
 1. Real-device numbers on an arm64 phone: open time, search latency, peak memory (the engine decodes the whole dataset into RAM today).
    If memory is a problem: lazy block decode of printing records and a mapped index.
-2. Prices in the engine: `openPrices`, `getPrices(rows)`, `applyPriceDelta`, and price terms in search (`usd>=`, `eur<`) now that data exists.
+2. Prices in the engine (done 0.0.2-27/28: `attachOverlay`, `getPrices(rows)`, overlay patching via `patchFile`, price terms `usd>=`, `eur<` in search; source is MTGJSON only).
 3. Batch helpers for user data: `getByScryfallIds(ids[])`, `rowsOf(ids[])`, persistent named sets; row tombstones surface as `null`.
 4. Sort and uniqueness controls slbop needs (`order:`, `unique:`, `prefer:`): audit against the queries slbop actually issues today.
 5. Robustness: fuzz/malformed-input tests for every reader (`.coqd/.coqi/.coqr` and all patch formats), no panics across the C ABI.

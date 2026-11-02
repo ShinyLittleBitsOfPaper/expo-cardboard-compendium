@@ -11,11 +11,13 @@ export interface EngineInfo {
   /** Attached overlays (prices, ...): file hash, row count, source date. */
   overlays: Record<string, { sha256: string; rows: number; sourceDate: number }>;
 }
+export type Prices = Record<'usd' | 'usd_foil' | 'usd_etched' | 'eur' | 'eur_foil' | 'eur_etched', string | null>;
 export interface SearchOptions {
   limit?: number;
   offset?: number;
   scope?: string; // name from registerSet
   cards?: boolean; // include card JSON for the returned rows
+  prices?: boolean; // with `cards`: add a `prices` object to each card (needs the prices overlay)
 }
 export interface SearchResult {
   total: number;
@@ -29,7 +31,9 @@ export const close = () => call<null>('close');
 export const info = () => call<EngineInfo>('info');
 export const search = (query: string, o: SearchOptions = {}) => call<SearchResult>('search', { query, ...o });
 /** Records (MTG: card JSON) for primary-table rows; null for a removed row. */
-export const getRecords = (rows: Row[]) => call<(Card | null)[]>('getRecords', { rows });
+export const getRecords = (rows: Row[], o: { prices?: boolean } = {}) => call<(Card | null)[]>('getRecords', { rows, ...o });
+/** MTGJSON retail prices of rows, Scryfall-shaped (`usd`, `usd_foil`, `usd_etched` = TCGplayer; `eur`, `eur_foil`, `eur_etched` = Cardmarket; strings, null = none). Needs the prices overlay. */
+export const getPrices = (rows: Row[]) => call<(Prices | null)[]>('getPrices', { rows });
 /** One record by its natural key (MTG: Scryfall id), null when unknown. */
 export const getByKey = (key: string) => call<Card | null>('getByKey', { key });
 export const getCards = getRecords;

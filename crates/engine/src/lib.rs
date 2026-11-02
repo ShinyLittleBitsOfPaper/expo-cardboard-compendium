@@ -1,7 +1,7 @@
 //! On-device engine over a COQD dataset + COQI search index.
 //!
 //! API (see docs/engine.md): `open`, `search`, `getRecords` (= `getCards`), `getByKey` (= `getByScryfallId`), `registerSet`,
-//! `applyPatch`, `applyIndexDelta`, `attachOverlay`, `detachOverlay`, `info`. `Engine::call` is the JSON dispatcher the C ABI (`ffi`) and the Expo module use.
+//! `applyPatch`, `applyIndexDelta`, `attachOverlay`, `detachOverlay`, `getPrices`, `info`. `Engine::call` is the JSON dispatcher the C ABI (`ffi`) and the Expo module use.
 //! The dataset is held as a columnar `Store` (no per-record structs); the index is loaded from the `.coqi` when its
 //! dataset hash matches and its columns fit the tables, otherwise rebuilt (and the `.coqi` rewritten).
 
@@ -151,6 +151,50 @@ impl Engine {
         Ok(())
     }
 
+    /// MTGJSON prices of printing rows from the attached `prices` overlay, Scryfall-shaped (`usd`, `usd_foil`, `usd_etched`, `eur`,
+    /// `eur_foil`, `eur_etched`: strings with two decimals, null = no price). `usd*` is TCGplayer retail, `eur*` Cardmarket retail.
+    /// Row i of the result belongs to `rows[i]`; an unknown or removed row gives null.
+    pub fn prices(&self, rows: &[u32]) -> Result<Value, String> {
+        let (_, o) = self.overlays.iter().find(|(i, _)| i == "prices").ok_or("prices overlay not attached (attachOverlay)")?;
+        let (def, t) = o.store.table("price").ok_or("prices overlay has no price table")?;
+        let col = |name: &str| def.columns.iter().position(|c| c.name == name).ok_or_else(|| format!("prices overlay lacks {name}"));
+        let keys = [("usd", "tcg_normal"), ("usd_foil", "tcg_foil"), ("usd_etched", "tcg_etched"), ("eur", "cm_normal"), ("eur_foil", "cm_foil"), ("eur_etched", "cm_etched")];
+        let mut cols = Vec::new();
+        for (k, c) in keys {
+            match &t.cols[col(c)?] {
+                coqc_format::table::ColData::Int(v) => cols.push((k, v)),
+                _ => return Err("bad price column".into()),
+            }
+        }
+        let live = &self.store.tables[self.primary].tomb;
+        Ok(Value::Array(
+            rows.iter()
+                .map(|&r| {
+                    if live.get(r as usize).is_none_or(|t| *t) {
+                        return Value::Null;
+                    }
+                    let mut m = serde_json::Map::new();
+                    for (k, v) in &cols {
+                        let cents = v.get(r as usize).copied().flatten();
+                        m.insert(k.to_string(), cents.map_or(Value::Null, |c| json!(format!("{}.{:02}", c / 100, c % 100))));
+                    }
+                    Value::Object(m)
+                })
+                .collect(),
+        ))
+    }
+
+    /// Set `prices` on record JSON objects (`records[i]` is row `rows[i]`); records without a row or price stay untouched.
+    fn add_prices(&self, rows: &[u32], records: &mut [Value]) -> Result<(), String> {
+        let p = self.prices(rows)?;
+        for (rec, pr) in records.iter_mut().zip(p.as_array().into_iter().flatten()) {
+            if let (Some(o), false) = (rec.as_object_mut(), pr.is_null()) {
+                o.insert("prices".into(), pr.clone());
+            }
+        }
+        Ok(())
+    }
+
     pub fn detach_overlay(&mut self, id: &str) {
         self.overlays.retain(|(i, _)| i != id);
     }
@@ -226,7 +270,11 @@ impl Engine {
                 let page = self.search(query, limit, offset, s("scope"))?;
                 let mut out = json!({"total": page.total, "rows": page.rows});
                 if a.get("cards").and_then(Value::as_bool) == Some(true) {
-                    out["cards"] = Value::Array(page.rows.iter().filter_map(|&r| self.card(r)).collect());
+                    let mut cards: Vec<Value> = page.rows.iter().filter_map(|&r| self.card(r)).collect();
+                    if a.get("prices").and_then(Value::as_bool) == Some(true) {
+                        self.add_prices(&page.rows, &mut cards)?;
+                    }
+                    out["cards"] = Value::Array(cards);
                 }
                 Ok(out)
             }
@@ -240,7 +288,17 @@ impl Engine {
             }
             "getCards" | "getRecords" => {
                 let rows = a.get("rows").and_then(Value::as_array).ok_or("missing rows")?;
-                Ok(Value::Array(rows.iter().map(|r| r.as_u64().and_then(|r| self.card(r as u32)).unwrap_or(Value::Null)).collect()))
+                let rows: Vec<u32> = rows.iter().map(|r| r.as_u64().map_or(u32::MAX, |r| r as u32)).collect();
+                let mut out: Vec<Value> = rows.iter().map(|&r| self.card(r).unwrap_or(Value::Null)).collect();
+                if a.get("prices").and_then(Value::as_bool) == Some(true) {
+                    self.add_prices(&rows, &mut out)?;
+                }
+                Ok(Value::Array(out))
+            }
+            "getPrices" => {
+                let rows = a.get("rows").and_then(Value::as_array).ok_or("missing rows")?;
+                let rows: Vec<u32> = rows.iter().map(|r| r.as_u64().map_or(u32::MAX, |r| r as u32)).collect();
+                self.prices(&rows)
             }
             "getByScryfallId" | "getByKey" => {
                 let id = s("id").or_else(|| s("key")).ok_or("missing id")?;

@@ -202,6 +202,18 @@ fn price_overlay_attach_search_and_patch_file() {
     e.call("attachOverlay", &json!({"id": "prices", "path": pr})).unwrap();
     assert_eq!(q(&mut e, "usd>1"), count(&p2, 0, &|c| c > 100));
 
+    // MTGJSON prices come back Scryfall-shaped, from the overlay only (compiled card data never carries Scryfall prices)
+    let gp = e.call("getPrices", &json!({"rows": [0, 1, 99999]})).unwrap();
+    let want0 = p2.cents(0, 0).unwrap();
+    assert_eq!(gp[0]["usd"], format!("{}.{:02}", want0 / 100, want0 % 100));
+    assert_eq!(gp[0]["eur"], "0.80");
+    assert!(gp[0]["usd_foil"].is_null() && gp[1]["usd"].is_null() && gp[2].is_null());
+    let with = e.call("getRecords", &json!({"rows": [0], "prices": true})).unwrap();
+    assert_eq!(with[0]["prices"]["usd"], gp[0]["usd"]);
+    assert!(e.call("getRecords", &json!({"rows": [0]})).unwrap()[0].get("prices").is_none());
+    let s = e.call("search", &json!({"query": "include:extras", "limit": 2, "cards": true, "prices": true})).unwrap();
+    assert!(s["cards"][0]["prices"].is_object());
+
     // an overlay of another epoch is refused; detaching restores the error
     let mut other = mk(0);
     other.cards_epoch += 1;
