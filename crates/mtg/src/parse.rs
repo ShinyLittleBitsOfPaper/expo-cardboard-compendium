@@ -277,7 +277,7 @@ impl P {
             "o" | "oracle" => { text_op(op)?; Expr::Oracle(v.into()) }
             "fo" | "fulloracle" => { text_op(op)?; Expr::FullOracle(v.into()) }
             "c" | "color" | "colors" => color(op, v, false)?,
-            "id" | "identity" | "ci" => color(op, v, true)?,
+            "id" | "identity" | "ci" | "commander" => color(op, v, true)?,
             "mv" | "manavalue" | "cmc" => {
                 if op == Op::Colon && matches!(v.to_ascii_lowercase().as_str(), "even" | "odd") {
                     Expr::MvParity(v.to_ascii_lowercase())

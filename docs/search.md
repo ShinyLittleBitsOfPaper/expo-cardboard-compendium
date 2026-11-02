@@ -85,3 +85,11 @@ Not done: price predicates (`usd>1`; prices are outside the indexed store, wait 
 Default hiding (Scryfall): layout vanguard/planar/scheme/phenomenon/art_series, set_type memorabilia and promo_types `playtest`
 (cmb1/cmb2/unk) are hidden; other funny sets are visible, unless `include:extras` or the query contains a `t:` or `s:`/`e:` term
 (anywhere, approximation). Tokens/emblems not hidden yet (unverified).
+
+## slbop's queries (Milestone 3.4 audit, 0.0.2-30)
+Audited against slbop 0.44.3 `src/utils/searchParser.ts` and `db/cards.ts`. Tests: `crates/engine/tests/slbop_queries.rs`, `src/sync/__tests__/appQuery.test.ts`.
+- **Same syntax, nothing to do:** bare name, `-name`, `t:`/`type:`, `o:`/`oracle:` (`:` contains, `=` exact), `c:`/`colors:`, `id:`/`identity:`/`ci:` (incl. `azorius`/`bant`/`jeskai`, counts), `r:`/`rarity:` with `< >`, `s:`/`set:`, `cn:`/`number:`, `mv:`/`cmc:`, `-` on any term; keywords and operators are case-insensitive. `commander:` (an `id` alias in slbop and Scryfall) was missing and is added.
+- **Listing semantics differ by default.** slbop lists every printing, newest first (`released_at DESC, name, id`), tokens included. The engine defaults to `unique:cards`, hides extras and sorts by name. Use `unique:prints include:extras order:released direction:desc` (the test checks it lists every live printing, in that order, stable across pages). `dir:` is not a keyword (only `direction:`).
+- **App-side, not engine syntax:** `tag:` (user data: resolve with `registerSet`/`registerRows` and `scope`, negated tags by filtering) and `set#number` (rewrite to `s:set cn:number`). `adaptAppQuery(raw)` in the module does both rewrites and adds the directives above; it returns the extracted tags.
+- **Scanner/lookups** (`getPrintingsByCollectorNumber`, name/set/number SQL in `db/cards.ts`) are key lookups, not searches: `s:x cn:y include:extras` plus the app's ordering (`prefer` promo handling) covers them; `prefer:` beyond oldest/newest stays unsupported and slbop does not issue it.
+- Not verified: `released_at` NULL handling (NULLS LAST in slbop; compiled data always has a date), ordering ties beyond name (slbop breaks on its own row id).

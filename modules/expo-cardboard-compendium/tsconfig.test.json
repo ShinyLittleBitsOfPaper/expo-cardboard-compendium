@@ -11,5 +11,5 @@
     "rootDir": "src/sync",
     "outDir": ".test-out"
   },
-  "include": ["src/sync/manifest.ts", "src/sync/plan.ts", "src/sync/run.ts", "src/sync/__tests__/*.ts"]
+  "include": ["src/sync/manifest.ts", "src/sync/plan.ts", "src/sync/run.ts", "src/sync/appQuery.ts", "src/sync/__tests__/*.ts"]
 }
