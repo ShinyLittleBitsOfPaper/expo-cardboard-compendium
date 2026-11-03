@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 coqc-format = { path = "../format" }
 coqc-mtg = { path = "../mtg" }
+coqc-generic = { path = "../generic" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

@@ -383,3 +383,23 @@ test('openLocal: opens the dataset and attaches every overlay in state', async (
   assert.deepEqual((await openLocal(w.deps, DIR)).failed, ['rulings']);
   await assert.rejects(openLocal(world(release(1)).deps, '/nowhere'), /run sync first/);
 });
+
+test('a non-MTG dataset (base "books") resolves: ids do not matter, roles do', async () => {
+  const r = release(1, { pad: 5000 });
+  const rename = (id: string) => id.replace('cards', 'books');
+  for (const d of r.manifest.datasets) {
+    d.id = rename(d.id);
+    if (d.of) d.of = rename(d.of);
+  }
+  const res = resolve(parseManifest(JSON.parse(JSON.stringify(r.manifest))));
+  assert.equal(res.cards.id, 'books');
+  assert.equal(res.index.id, 'books-index');
+  assert.deepEqual(res.overlays.map((o) => o.id), ['prices']);
+  // two bases are ambiguous, a base without an index is refused
+  const two = JSON.parse(JSON.stringify(r.manifest)) as Manifest;
+  two.datasets.push({ ...two.datasets[0], id: 'other' });
+  assert.throws(() => resolve(two), /more than one base/);
+  const noIdx = JSON.parse(JSON.stringify(r.manifest)) as Manifest;
+  noIdx.datasets = noIdx.datasets.filter((d) => d.role !== 'index');
+  assert.throws(() => resolve(noIdx), /no index of "books"/);
+});

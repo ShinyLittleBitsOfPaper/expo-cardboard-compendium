@@ -57,6 +57,14 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// The dialect for a schema id: `mtg` -> Magic, everything else -> the generic schema-driven dialect.
+pub fn dialect_for(schema_id: &str) -> Box<dyn Dialect> {
+    match schema_id {
+        "mtg" => Box::new(coqc_mtg::Mtg),
+        _ => Box::new(coqc_generic::Generic),
+    }
+}
+
 type Loaded = (Store, [u8; 32], HashMap<Vec<u8>, u32>);
 
 fn load_dataset(path: &Path, dialect: &dyn Dialect) -> Result<Loaded, String> {
@@ -72,8 +80,12 @@ fn str_list(a: &Value, k: &str) -> Result<Vec<String>, String> {
 
 impl Engine {
     /// Open a dataset and (optionally) its `.coqi`. A missing, unreadable or mismatching `.coqi` is rebuilt.
+    /// The dialect is picked from the dataset's schema id: `mtg` is the Magic dialect, any other schema is served by the
+    /// schema-driven generic dialect ([`dialect_for`]).
     pub fn open(coqd: &Path, coqi_path: Option<&Path>) -> Result<Engine, String> {
-        Self::open_with(coqd, coqi_path, Box::new(coqc_mtg::Mtg))
+        let bytes = std::fs::read(coqd).map_err(|e| format!("{}: {e}", coqd.display()))?;
+        let id = coqd::parse(&bytes).and_then(|p| p.schema()).map_err(|e| format!("{}: {e}", coqd.display()))?.id;
+        Self::open_with(coqd, coqi_path, dialect_for(&id))
     }
 
     /// Like `open` with an explicit dialect (query syntax, derived columns, record JSON, key lookup).
@@ -120,14 +132,14 @@ impl Engine {
     }
 
     pub fn search(&mut self, query: &str, limit: Option<usize>, offset: usize, scope: Option<&str>) -> Result<Page, String> {
-        let mut q = self.dialect.parse_gquery(query)?;
+        self.ensure_index()?;
+        let ov: Vec<(String, &Store)> = self.overlays.iter().map(|(id, o)| (id.clone(), &o.store)).collect();
+        let mut q = self.dialect.parse_gquery(query, &self.store, &ov)?;
         q.limit = limit;
         q.offset = offset;
         if let Some(name) = scope {
             q.scope = Some(self.sets.get(name).cloned().ok_or_else(|| format!("unknown set '{name}'"))?);
         }
-        self.ensure_index()?;
-        let ov: Vec<(String, &Store)> = self.overlays.iter().map(|(id, o)| (id.clone(), &o.store)).collect();
         let ix = GIndex::with_parts(&self.store, Some(self.dialect.hooks()), self.parts.as_ref().unwrap())?.with_overlays(ov);
         let r = ix.search(&q)?;
         Ok(Page { total: r.total, rows: r.rows })

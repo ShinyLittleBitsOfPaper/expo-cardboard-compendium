@@ -53,6 +53,7 @@ See `docs/roadmap.md` for what is planned next (data pipeline, client sync, engi
 
 - `crates/format`: `coqc-format` (generic: schema, columnar `Store`, COQD container, COQP patches, price tables, the generic search index and `.coqi`, `Dialect` trait; no Magic knowledge)
 - `crates/format/src/schema.rs`, `table.rs`, `coqd.rs`: generic schema, columnar table store, and the COQD v3 container (`coqd.rs` header documents the layout); `patch.rs`: COQP v2 row patches over stores
+- `crates/generic`: `coqc-generic` (schema-driven dialect for any dataset: `ingest.rs` JSONL + overlays, `query.rs` query language, `demo.rs` synthetic books; docs/generic.md)
 - `crates/mtg`: `coqc-mtg` (the Magic dialect: record types `types.rs` (`Dataset`, the ingestion working shape), `tables.rs` (schema + Store bridge), index columns/predicates `gindex.rs`, query tree `query.rs`, Scryfall ingestion `ingest.rs`, MTGJSON price ingestion `prices.rs`, Scryfall query syntax `parse.rs`, card JSON `json.rs`, `synth.rs`)
 - `crates/compiler`: `coqc` (library + CLI)
 - `crates/format/src/{gindex,search,coqi}.rs`: generic index evaluator, text-index primitives, `.coqi` serialization + deltas (docs/search.md)

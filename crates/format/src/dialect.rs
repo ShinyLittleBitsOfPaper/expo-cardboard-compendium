@@ -7,8 +7,10 @@ use crate::table::Store;
 pub trait Dialect: Send + Sync {
     /// Stable id stored in schemas, e.g. `"mtg"`.
     fn id(&self) -> &'static str;
-    /// Parse the dataset's query language into the generic query tree (sort/unique/prefer/hide directives included).
-    fn parse_gquery(&self, q: &str) -> Result<GQuery, String>;
+    /// Parse the dataset's query language into the generic query tree (sort/unique/prefer/hide directives included). `st` is the
+    /// open dataset (a schema-driven dialect resolves fields, types and dictionary values against it); `overlays` are the attached
+    /// overlay datasets `(id, store)`, so a dialect can accept predicates on their columns.
+    fn parse_gquery(&self, q: &str, st: &Store, overlays: &[(String, &Store)]) -> Result<GQuery, String>;
     /// Derived columns and the automatic text columns to skip, computed from the store at index-build time.
     fn index_spec(&self, st: &Store) -> Result<IndexSpec, String>;
     /// Evaluator for `Custom` predicates.

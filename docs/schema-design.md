@@ -65,8 +65,9 @@ subcommands from `coqc-mtg`). Crate names stay as they are; only `coqc-mtg` is n
     `coqc manifest` and `data-*.sh` over it.
   - **S4c (part 1 done 0.0.2-26: TS sync over manifest v2, overlays as full files; part 2 done 0.0.2-27: engine overlay attach, overlay patching, price predicates, generic getRecords/getByKey):** module TS sync over manifest v2 (generic apply of `.coqp` incl. overlays; engine `applyPatch` for any dataset), engine attaches an
     overlay to its base (price predicates in search), generic `getRecords`/`getByKey`, MTG wrappers thin.
-- **S5 Proof: a second, non-MTG schema** (a small synthetic dataset) compiled, searched, patched, published offline and synced
-  end to end.
+- **S5 Proof: a second, non-MTG schema (done 0.0.2-32, docs/generic.md):** crate `coqc-generic` (JSONL ingest with stable rows, schema-driven query
+  language, record JSON, overlay predicates), synthetic books dataset, `Dialect::parse_gquery` now takes the store and overlays; compiled,
+  searched, patched, index-delta'd, overlaid, published offline and synced (simulated client) end to end with no Magic code.
 
 ## Acceptance
 MTG golden queries identical before and after; `coqc verify` 0 mismatches; file sizes within +5%, search latency within +10% of the

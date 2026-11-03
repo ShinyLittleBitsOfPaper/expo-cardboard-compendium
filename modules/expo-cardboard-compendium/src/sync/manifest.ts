@@ -45,16 +45,21 @@ export interface Manifest {
 /** Manifest versions this module understands. A newer one means the app must be updated. */
 export const SUPPORTED_MANIFEST_VERSION = 2;
 
-/** The datasets this module syncs: the `cards` base, its `cards-index`, and any overlays (prices, ...) of `cards`. */
+/**
+ * The datasets this module syncs: the one `base` dataset (any id: `cards`, `books`, ...), its index, and any overlays (prices, ...)
+ * of it. Roles decide, ids do not. The field is still called `cards` for the primary dataset; local file names are fixed (dataPaths).
+ */
 export interface Resolved {
   cards: Dataset;
   index: Dataset;
   overlays: Dataset[];
 }
 export function resolve(m: Manifest): Resolved {
-  const cards = m.datasets.find((d) => d.id === 'cards' && d.role === 'base') ?? bad('datasets (no base "cards")');
-  const index = m.datasets.find((d) => d.role === 'index' && d.of === 'cards') ?? bad('datasets (no index of "cards")');
-  return { cards, index, overlays: m.datasets.filter((d) => d.role === 'overlay' && d.of === 'cards') };
+  const bases = m.datasets.filter((d) => d.role === 'base');
+  const cards = bases[0] ?? bad('datasets (no base dataset)');
+  if (bases.length > 1) bad('datasets (more than one base dataset)');
+  const index = m.datasets.find((d) => d.role === 'index' && d.of === cards.id) ?? bad(`datasets (no index of "${cards.id}")`);
+  return { cards, index, overlays: m.datasets.filter((d) => d.role === 'overlay' && d.of === cards.id) };
 }
 
 const bad = (path: string): never => {

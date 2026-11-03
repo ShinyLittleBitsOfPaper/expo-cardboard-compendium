@@ -1,0 +1,12 @@
+[package]
+name = "coqc-generic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Schema-driven dialect for coq: JSONL ingest, query language, record JSON and overlays for any dataset described by a schema (no dataset-specific code)"
+
+[dependencies]
+coqc-format = { path = "../format" }
+serde_json = "1"
+sha2 = "0.10"

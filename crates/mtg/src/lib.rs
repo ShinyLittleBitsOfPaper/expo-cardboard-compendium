@@ -26,7 +26,7 @@ impl coqc_format::dialect::Dialect for Mtg {
     fn id(&self) -> &'static str {
         "mtg"
     }
-    fn parse_gquery(&self, q: &str) -> Result<coqc_format::gindex::GQuery, String> {
+    fn parse_gquery(&self, q: &str, _st: &coqc_format::table::Store, _overlays: &[(String, &coqc_format::table::Store)]) -> Result<coqc_format::gindex::GQuery, String> {
         Ok(gindex::translate(&parse::parse(q).map_err(|e| e.0)?))
     }
     fn index_spec(&self, st: &coqc_format::table::Store) -> Result<coqc_format::gindex::IndexSpec, String> {

@@ -35,6 +35,11 @@ USAGE:
   coqc manifest --base ID=f.coqd[,patch=f.coqp][,prefix=P-] [--base ...] [--index ID=f.coqi.zst[,of=BASE][,patch=f.coqid][,prefix=P-]]
                [--overlay ID=f.coqd[,of=BASE][,patch=f.coqp][,prefix=P-] ...] --run <data-tag> --at <ISO UTC> --keep-since <ISO UTC>
                [--repo OWNER/REPO | --base-url URL] [--prev manifest.json] [--rebase] -o manifest.json   (manifest v2, docs/manifest.md)
+  coqc generic-compile <schema.json> --table NAME=file.jsonl ... -o <out.coqd> [--prev p.coqd] [--rebase] [--source-date N]
+                                                   any schema-described dataset (docs/generic.md); every other command works on it too
+  coqc generic-overlay <overlay-schema.json> <base.coqd> <in.jsonl> -o <out.coqd>   columnar overlay whose row i follows base row i
+  coqc demo-books <dir> [--works N] [--day D]      the synthetic books dataset (schema + JSONL) used by the S5 proof
+  coqc search ... [--overlay id=file.coqd]         attach overlays so queries can use their columns
   coqc synth   <n_printings> <out.jsonl> [--day N] synthetic data for scale tests
 ";
 
@@ -305,14 +310,17 @@ fn load_store(path: &Path) -> (Vec<u8>, coqc_format::table::Store) {
 }
 
 fn build_index_parts(st: &coqc_format::table::Store) -> coqc_format::gindex::IndexParts {
-    use coqc_format::dialect::Dialect;
-    let spec = coqc_mtg::Mtg.index_spec(st).unwrap_or_else(|e| die(&e));
+    let spec = coqc::dialect_for(st).index_spec(st).unwrap_or_else(|e| die(&e));
     coqc_format::gindex::GIndex::build_parts(st, spec, coqc_format::search::STOP_FRACTION, coqc_format::search::STOP_MIN).unwrap_or_else(|e| die(&e))
 }
 
 fn run_gquery(st: &coqc_format::table::Store, parts: &coqc_format::gindex::IndexParts, q: &coqc_format::gindex::GQuery) -> coqc_format::gindex::GResult {
-    use coqc_format::dialect::Dialect;
-    let ix = coqc_format::gindex::GIndex::with_parts(st, Some(coqc_mtg::Mtg.hooks()), parts).unwrap_or_else(|e| die(&e));
+    run_gquery_ov(st, parts, q, vec![])
+}
+
+fn run_gquery_ov<'a>(st: &'a coqc_format::table::Store, parts: &'a coqc_format::gindex::IndexParts, q: &coqc_format::gindex::GQuery, ov: Vec<(String, &'a coqc_format::table::Store)>) -> coqc_format::gindex::GResult {
+    let d = coqc::dialect_for(st);
+    let ix = coqc_format::gindex::GIndex::with_parts(st, Some(d.hooks()), parts).unwrap_or_else(|e| die(&e)).with_overlays(ov);
     ix.search(q).unwrap_or_else(|e| die(&e))
 }
 
@@ -328,8 +336,9 @@ fn cmd_index_stats(args: &[String]) {
     for s in coqi::section_sizes(&parts, &st.schema) {
         println!("  {:<24} raw {:>10}  zstd {:>10}", s.name, mb(s.raw as u64), mb(s.zstd as u64));
     }
-    for q in SAMPLE_QUERIES {
-        let g = coqc_mtg::Mtg.parse_gquery(q).unwrap_or_else(|e| die(&e));
+    let samples: &[&str] = if st.schema.id == "mtg" { &SAMPLE_QUERIES } else { &[] };
+    for q in samples {
+        let g = coqc_mtg::Mtg.parse_gquery(q, &st, &[]).unwrap_or_else(|e| die(&e));
         let t = Instant::now();
         let r = run_gquery(&st, &parts, &g);
         println!("  {q:<32} {:>7} prints  {:>6.1} ms", r.total, t.elapsed().as_secs_f64() * 1000.0);
@@ -370,8 +379,9 @@ fn cmd_index_build(args: &[String]) {
         die("round trip differs");
     }
     let (mut agree, mut total) = (0, 0);
-    for q in SAMPLE_QUERIES {
-        let g = coqc_mtg::Mtg.parse_gquery(q).unwrap_or_else(|e| die(&format!("{q}: {e}")));
+    let samples: &[&str] = if st.schema.id == "mtg" { &SAMPLE_QUERIES } else { &[] };
+    for q in samples {
+        let g = coqc_mtg::Mtg.parse_gquery(q, &st, &[]).unwrap_or_else(|e| die(&format!("{q}: {e}")));
         total += 1;
         agree += (run_gquery(&st, &parts, &g).rows == run_gquery(&st, &back, &g).rows) as usize;
     }
@@ -421,10 +431,15 @@ fn cmd_index_apply(args: &[String]) {
 }
 
 fn cmd_search(args: &[String]) {
-    use coqc_format::dialect::Dialect;
     use coqc_format::gindex::GQuery;
     let path = args.first().unwrap_or_else(|| die("missing dataset"));
     let (_, st) = load_store(Path::new(path));
+    // --overlay id=file.coqd (repeatable): attach overlays so their columns can be queried
+    let ovs: Vec<(String, coqc_format::table::Store)> = args.windows(2).filter(|w| w[0] == "--overlay").map(|w| {
+        let (id, f) = w[1].split_once('=').unwrap_or_else(|| die("--overlay id=file.coqd"));
+        (id.to_string(), load_store(Path::new(f)).1)
+    }).collect();
+    let ov_refs: Vec<(String, &coqc_format::table::Store)> = ovs.iter().map(|(i, s)| (i.clone(), s)).collect();
     let mut query: GQuery = match flag_value(args, "--plan") {
         Some(j) => serde_json::from_str(&j).unwrap_or_else(|e| die(&format!("bad --plan: {e}"))),
         None => {
@@ -433,12 +448,12 @@ fn cmd_search(args: &[String]) {
             while i < args.len() {
                 match args[i].as_str() {
                     "--cards" => {}
-                    "--limit" | "--offset" | "--plan" => i += 1,
+                    "--limit" | "--offset" | "--plan" | "--overlay" => i += 1,
                     w => words.push(w.to_string()),
                 }
                 i += 1;
             }
-            coqc_mtg::Mtg.parse_gquery(&words.join(" ")).unwrap_or_else(|e| die(&e))
+            coqc::dialect_for(&st).parse_gquery(&words.join(" "), &st, &ov_refs).unwrap_or_else(|e| die(&e))
         }
     };
     if args.iter().any(|a| a == "--cards") {
@@ -450,9 +465,16 @@ fn cmd_search(args: &[String]) {
     let parts = build_index_parts(&st);
     let built = t.elapsed();
     let t = Instant::now();
-    let r = run_gquery(&st, &parts, &query);
+    let r = run_gquery_ov(&st, &parts, &query, ov_refs);
     let took = t.elapsed();
     println!("{} matches (index {} ms, query {:.2} ms)", r.total, built.as_millis(), took.as_secs_f64() * 1000.0);
+    if st.schema.id != "mtg" {
+        let d = coqc::dialect_for(&st);
+        for row in r.rows {
+            println!("  {:>6}  {}", row, d.record_json(&st, row));
+        }
+        return;
+    }
     for row in r.rows {
         let p = coqc_mtg::tables::printing_at(&st, row as usize).unwrap_or_else(|e| die(&e.to_string()));
         let o = coqc_mtg::tables::oracle_at(&st, p.oracle_row as usize).unwrap_or_else(|e| die(&e.to_string()));
@@ -465,6 +487,68 @@ fn cmd_search(args: &[String]) {
             o.name.as_deref().unwrap_or("?")
         );
     }
+}
+
+fn read_text(p: &str) -> String {
+    std::fs::read_to_string(p).unwrap_or_else(|e| die(&format!("{p}: {e}")))
+}
+
+fn read_schema(p: &str) -> coqc_format::schema::Schema {
+    serde_json::from_str(&read_text(p)).unwrap_or_else(|e| die(&format!("{p}: bad schema JSON: {e}")))
+}
+
+fn write_coqd(st: &coqc_format::table::Store, out: &str) {
+    let (bytes, sections) = coqc_format::write_store(st).unwrap_or_else(|e| die(&e.to_string()));
+    std::fs::write(out, &bytes).unwrap_or_else(|e| die(&format!("{out}: {e}")));
+    let sha = sha_hex(&bytes);
+    let fname = PathBuf::from(out).file_name().unwrap().to_string_lossy().to_string();
+    std::fs::write(format!("{out}.sha256"), format!("{sha}  {fname}\n")).ok();
+    for s in &sections {
+        println!("    {:<15} raw {:>11}  stored {:>11}  blocks {}", s.name, mb(s.raw_bytes), mb(s.stored_bytes), s.blocks);
+    }
+    println!("epoch {}  file {}  sha256 {sha}", st.epoch, mb(bytes.len() as u64));
+}
+
+/// coqc generic-compile <schema.json> --table name=file.jsonl ... -o out.coqd [--prev p.coqd] [--rebase] [--source-date N]
+fn cmd_generic_compile(args: &[String]) {
+    let schema = read_schema(args.first().unwrap_or_else(|| die("missing schema.json")));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <out.coqd>"));
+    let inputs: Vec<(String, String)> = args.windows(2).filter(|w| w[0] == "--table").map(|w| {
+        let (n, f) = w[1].split_once('=').unwrap_or_else(|| die("--table name=file.jsonl"));
+        (n.to_string(), read_text(f))
+    }).collect();
+    let prev = flag_value(args, "--prev").map(|p| load_store(Path::new(&p)).1);
+    let date = flag_value(args, "--source-date").map_or(0, |s| s.parse().unwrap_or_else(|_| die("bad --source-date")));
+    let (st, stats) = coqc_generic::ingest::compile(&schema, &inputs, prev.as_ref(), args.iter().any(|a| a == "--rebase"), date).unwrap_or_else(|e| die(&e));
+    for s in &stats {
+        println!("{:<12} {} lines: {} live ({} new, {} changed, {} revived, {} tombstoned)", s.table, s.lines, s.live, s.new, s.changed, s.revived, s.tombstoned);
+    }
+    write_coqd(&st, &out);
+}
+
+/// coqc generic-overlay <overlay-schema.json> <base.coqd> <in.jsonl> -o out.coqd [--source-date N]
+fn cmd_generic_overlay(args: &[String]) {
+    if args.len() < 3 {
+        die("usage: coqc generic-overlay <overlay-schema.json> <base.coqd> <in.jsonl> -o <out.coqd>");
+    }
+    let out = flag_value(args, "-o").unwrap_or_else(|| die("missing -o <out.coqd>"));
+    let date = flag_value(args, "--source-date").map_or(0, |s| s.parse().unwrap_or_else(|_| die("bad --source-date")));
+    let (st, s) = coqc_generic::ingest::compile_overlay(&read_schema(&args[0]), &load_store(Path::new(&args[1])).1, &read_text(&args[2]), date).unwrap_or_else(|e| die(&e));
+    println!("overlay: {} rows, {} lines, {} values, {} unknown keys skipped", s.rows, s.lines, s.values, s.unknown_keys);
+    write_coqd(&st, &out);
+}
+
+/// coqc demo-books <dir> [--works N] [--day D]: the synthetic S5 dataset (schema, overlay schema, JSONL for that day).
+fn cmd_demo_books(args: &[String]) {
+    let dir = args.first().unwrap_or_else(|| die("missing output directory"));
+    let n = flag_value(args, "--works").map_or(200, |s| s.parse().unwrap_or_else(|_| die("bad --works")));
+    let day = flag_value(args, "--day").map_or(1, |s| s.parse().unwrap_or_else(|_| die("bad --day")));
+    let d = coqc_generic::demo::books(n, day);
+    std::fs::create_dir_all(dir).unwrap_or_else(|e| die(&e.to_string()));
+    for (f, t) in [("schema.json", coqc_generic::demo::SCHEMA), ("overlay-schema.json", coqc_generic::demo::OVERLAY_SCHEMA), ("works.jsonl", &d.works), ("editions.jsonl", &d.editions), ("prices.jsonl", &d.prices)] {
+        std::fs::write(format!("{dir}/{f}"), t).unwrap_or_else(|e| die(&e.to_string()));
+    }
+    println!("wrote books day {day} ({n}+ works) to {dir}");
 }
 
 fn rd(p: &str) -> Vec<u8> {
@@ -714,6 +798,9 @@ fn main() {
         "inspect" => cmd_inspect(rest),
         "diff" => cmd_diff(rest),
         "synth" => cmd_synth(rest),
+        "generic-compile" => cmd_generic_compile(rest),
+        "generic-overlay" => cmd_generic_overlay(rest),
+        "demo-books" => cmd_demo_books(rest),
         "idmap" => cmd_idmap(rest),
         "prices" => cmd_prices(rest),
         "prices-patch" => cmd_prices_patch(rest),

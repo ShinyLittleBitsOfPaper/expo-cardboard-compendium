@@ -545,7 +545,7 @@ impl<'a> GIndex<'a> {
                 ColData::Float(v) => Acc::Num(Box::new(move |r| v[r])),
                 ColData::Bool(v) => Acc::Num(Box::new(move |r| v[r].map(|x| x as u8 as f64))),
                 ColData::Enum(v) => Acc::Num(Box::new(move |r| v[r].map(|x| x as f64))),
-                ColData::Str(v) => Acc::Str(Box::new(move |r| v[r].as_deref())),
+                ColData::Str(v) | ColData::Json(v) => Acc::Str(Box::new(move |r| v[r].as_deref())),
                 _ => return Err(format!("column {} cannot be compared", self.store.schema.tables[f.table].columns[c].name)),
             },
         })
