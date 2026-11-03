@@ -1,6 +1,6 @@
 {
   "name": "expo-cardboard-compendium",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Scryfall-syntax card search over compiled COQD/COQI data (Rust)",
   "license": "MIT",
   "repository": {
@@ -13,7 +13,8 @@
   "peerDependencies": {
     "expo": "*",
     "expo-modules-core": "*",
-    "react-native": "*"
+    "react-native": "*",
+    "expo-file-system": "*"
   },
   "files": [
     "src",
