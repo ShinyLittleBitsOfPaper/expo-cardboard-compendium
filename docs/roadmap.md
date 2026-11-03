@@ -86,8 +86,10 @@ failure, never leave the app without a working dataset. Planning logic is pure a
    with a UA), run on demand; the list of known differences goes in `docs/search.md`.
 
 ## Milestone 4: before slbop depends on it
-Publish the module (tagged tarball is enough), write the data-source adapter note (Scryfall bulk now; MTGJSON as a fallback source if
-permission is refused), and keep the "dataset-agnostic" direction as a design note only (README Naming) until slbop is live.
+Done 0.0.2-33 (docs only): tagged-tarball distribution and publish checklist in `docs/release.md`; data-source adapter note
+(Scryfall bulk now, MTGJSON shim as fallback if permission is refused) in `docs/adapters.md`. The "dataset-agnostic" direction is now
+implemented (S1-S5, `docs/generic.md`), so the README Naming note was rewritten. Still open: the blocking items listed in
+`docs/release.md` (Scryfall permission, device numbers, iOS xcframework).
 
 ## Measurements (2026-10-27, cards-202610270905, 119,339 printings)
 - `.coqp` 0.26 MB vs 29.73 MB full; `.coqx` 0.11 MB vs 0.36 MB full `.coqr`; index delta 0.27 MB.
