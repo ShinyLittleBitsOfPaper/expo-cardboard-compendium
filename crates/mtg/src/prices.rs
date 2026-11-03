@@ -76,7 +76,12 @@ impl PriceTable {
         for (c, d) in t.cols.iter().enumerate() {
             let ColData::Int(v) = d else { return Err(Error::Corrupt("bad price column")) };
             for (i, x) in v.iter().enumerate() {
-                p.cols[c][i] = x.map_or(0, |x| x as u32 + 1);
+                // Untrusted input: stored value is cents - 1 in 0..u32::MAX-1; anything else is corrupt (was an overflow panic).
+                let cell = match x {
+                    None => 0,
+                    Some(x) => u32::try_from(*x).ok().and_then(|x| x.checked_add(1)).ok_or(Error::Corrupt("price out of range"))?,
+                };
+                *p.cols.get_mut(c).and_then(|col| col.get_mut(i)).ok_or(Error::Corrupt("price column length"))? = cell;
             }
         }
         Ok(p)
