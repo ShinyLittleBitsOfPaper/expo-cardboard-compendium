@@ -478,11 +478,15 @@ fn decode_blocks(def: &TableDef, sec: &[u8], count: usize) -> Result<Table> {
         r.take(8)?;
         blocks.push((off, clen, rawlen));
     }
-    let data_start = 8 + n * 24;
+    // Checked arithmetic: offsets and lengths come from untrusted input (overflowed on fuzzed files; also wraps on 32-bit targets).
+    let data_start = n.checked_mul(24).and_then(|x| x.checked_add(8)).ok_or(Error::Corrupt("block table too large"))?;
     let mut t = Table::new(def);
     for (off, clen, rawlen) in blocks {
-        let start = data_start + off;
-        let comp = sec.get(start..start + clen).ok_or(Error::Corrupt("block out of range"))?;
+        let comp = data_start
+            .checked_add(off)
+            .and_then(|start| start.checked_add(clen).map(|end| (start, end)))
+            .and_then(|(start, end)| sec.get(start..end))
+            .ok_or(Error::Corrupt("block out of range"))?;
         let raw = crate::codec::zstd_exact(comp, rawlen).map_err(Error::Zstd)?;
         let mut br = Reader::new(&raw);
         while !br.is_empty() {
