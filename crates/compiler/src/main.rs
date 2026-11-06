@@ -311,7 +311,13 @@ fn cmd_phash_eval(args: &[String]) {
     println!("{} images x {} perturbations", images.len(), coqc_phash::ALL_PERTURBS.len());
     if args.iter().any(|a| a == "--variants") {
         println!("\nmatching variants (reference hashed once; photo hashed at each offset, best distance wins)");
-        for r in coqc_phash::evaluate_variants(&images) {
+        let t0 = std::time::Instant::now();
+        let reports = coqc_phash::evaluate_variants_progress(&images, &mut |d, n| {
+            if d % 20 == 0 || d == n {
+                eprintln!("  {d}/{n} images, {:.0}s elapsed", t0.elapsed().as_secs_f64());
+            }
+        });
+        for r in reports {
             let jit = r.per_perturb.iter().filter(|(p, _)| matches!(p, coqc_phash::Perturb::CropJitter | coqc_phash::Perturb::CropJitterNeg)).map(|(_, d)| d).sum::<f64>() / 2.0;
             let mut n = r.nearest_other.clone();
             n.sort();

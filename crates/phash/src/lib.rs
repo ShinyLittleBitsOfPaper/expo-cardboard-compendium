@@ -310,34 +310,57 @@ pub struct VariantReport {
 }
 
 pub fn evaluate_variants(images: &[Gray]) -> Vec<VariantReport> {
-    let mut out = Vec::new();
-    for (algo, pick) in [("dhash", dhash as fn(&Gray) -> u64), ("phash", phash)] {
+    evaluate_variants_progress(images, &mut |_, _| {})
+}
+
+/// Same as `evaluate_variants`, calling `progress(done, total)` after each image. Everything that does not depend on
+/// the pair being compared is computed once: reference hashes, clean photo hashes per offset (so the false-match
+/// matrix is popcounts only), and each perturbed image (built once per image, hashed for every variant).
+pub fn evaluate_variants_progress(images: &[Gray], progress: &mut dyn FnMut(usize, usize)) -> Vec<VariantReport> {
+    let algos: [(&'static str, fn(&Gray) -> u64); 2] = [("dhash", dhash), ("phash", phash)];
+    let n = images.len();
+    // refs[k][i], clean[k][i][o] with k = algo * VARIANTS.len() + variant
+    let mut refs: Vec<Vec<u64>> = Vec::new();
+    let mut clean: Vec<Vec<Vec<u64>>> = Vec::new();
+    for (_, pick) in algos.iter() {
         for v in VARIANTS.iter() {
-            let refs: Vec<u64> = images.iter().map(|g| pick(&window(g, v.ref_keep, 0.0, 0.0))).collect();
-            let best = |g: &Gray, r: u64| -> u32 {
-                v.offsets.iter().map(|&(ox, oy)| hamming(r, pick(&window(g, v.query_keep, ox, oy)))).min().unwrap()
-            };
-            let (mut counts, mut total) = ([0usize; 17], 0usize);
-            let mut sums = vec![0f64; ALL_PERTURBS.len()];
-            for (i, g) in images.iter().enumerate() {
-                for (pi, p) in ALL_PERTURBS.iter().enumerate() {
-                    let d = best(&perturb(g, *p), refs[i]);
-                    sums[pi] += d as f64;
-                    total += 1;
+            refs.push(images.iter().map(|g| pick(&window(g, v.ref_keep, 0.0, 0.0))).collect());
+            clean.push(images.iter().map(|g| v.offsets.iter().map(|&(ox, oy)| pick(&window(g, v.query_keep, ox, oy))).collect()).collect());
+        }
+    }
+    let kcount = refs.len();
+    let mut counts = vec![[0usize; 17]; kcount];
+    let mut sums = vec![vec![0f64; ALL_PERTURBS.len()]; kcount];
+    let mut total = vec![0usize; kcount];
+    for (i, g) in images.iter().enumerate() {
+        for (pi, p) in ALL_PERTURBS.iter().enumerate() {
+            let pg = perturb(g, *p);
+            for (a, (_, pick)) in algos.iter().enumerate() {
+                for (vi, v) in VARIANTS.iter().enumerate() {
+                    let k = a * VARIANTS.len() + vi;
+                    let d = v.offsets.iter().map(|&(ox, oy)| hamming(refs[k][i], pick(&window(&pg, v.query_keep, ox, oy)))).min().unwrap();
+                    sums[k][pi] += d as f64;
+                    total[k] += 1;
                     for t in d as usize..=16 {
-                        counts[t] += 1;
+                        counts[k][t] += 1;
                     }
                 }
             }
+        }
+        progress(i + 1, n);
+    }
+    let mut out = Vec::new();
+    for (a, (algo, _)) in algos.iter().enumerate() {
+        for (vi, v) in VARIANTS.iter().enumerate() {
+            let k = a * VARIANTS.len() + vi;
             let mut hits = [0f64; 17];
             for t in 0..17 {
-                hits[t] = counts[t] as f64 / total.max(1) as f64;
+                hits[t] = counts[k][t] as f64 / total[k].max(1) as f64;
             }
-            // unperturbed photo of image i against every other reference j: the false-match distance
-            let nearest_other = (0..images.len())
-                .map(|i| (0..images.len()).filter(|&j| j != i).map(|j| best(&images[i], refs[j])).min().unwrap_or(64))
+            let nearest_other = (0..n)
+                .map(|i| (0..n).filter(|&j| j != i).map(|j| clean[k][i].iter().map(|&q| hamming(refs[k][j], q)).min().unwrap()).min().unwrap_or(64))
                 .collect();
-            let per_perturb = ALL_PERTURBS.iter().enumerate().map(|(pi, p)| (*p, sums[pi] / images.len().max(1) as f64)).collect();
+            let per_perturb = ALL_PERTURBS.iter().enumerate().map(|(pi, p)| (*p, sums[k][pi] / n.max(1) as f64)).collect();
             out.push(VariantReport { variant: v.name, algo, hits, per_perturb, nearest_other });
         }
     }
