@@ -117,13 +117,14 @@ pub enum Perturb {
     RotatePlus2,
     RotateMinus2,
     CropJitter,
+    CropJitterNeg,
     Jpeg40,
     Perspective,
 }
 
-pub const ALL_PERTURBS: [Perturb; 10] = [
+pub const ALL_PERTURBS: [Perturb; 11] = [
     Perturb::Blur, Perturb::BrightUp, Perturb::BrightDown, Perturb::ContrastUp, Perturb::ContrastDown,
-    Perturb::RotatePlus2, Perturb::RotateMinus2, Perturb::CropJitter, Perturb::Jpeg40, Perturb::Perspective,
+    Perturb::RotatePlus2, Perturb::RotateMinus2, Perturb::CropJitter, Perturb::CropJitterNeg, Perturb::Jpeg40, Perturb::Perspective,
 ];
 
 fn sample(g: &Gray, x: f32, y: f32) -> f32 {
@@ -185,6 +186,13 @@ fn crop_jitter(g: &Gray) -> Gray {
     map_px(g, |x, y| (mx * 2.0 + x as f32 / g.w as f32 * w, my * 2.0 + y as f32 / g.h as f32 * h))
 }
 
+fn crop_jitter_neg(g: &Gray) -> Gray {
+    // the mirror image: 6% cut from the right/bottom instead
+    let (mx, my) = (g.w as f32 * 0.03, g.h as f32 * 0.03);
+    let (w, h) = (g.w as f32 - 2.0 * mx, g.h as f32 - 2.0 * my);
+    map_px(g, |x, y| (x as f32 / g.w as f32 * w, y as f32 / g.h as f32 * h))
+}
+
 fn perspective(g: &Gray) -> Gray {
     // shrink the right edge by 4% top and bottom (a card photographed slightly off-axis)
     let k = 0.04;
@@ -214,6 +222,7 @@ pub fn perturb(g: &Gray, p: Perturb) -> Gray {
         Perturb::RotatePlus2 => rotate(g, 2.0),
         Perturb::RotateMinus2 => rotate(g, -2.0),
         Perturb::CropJitter => crop_jitter(g),
+        Perturb::CropJitterNeg => crop_jitter_neg(g),
         Perturb::Jpeg40 => jpeg(g, 40),
         Perturb::Perspective => perspective(g),
     }
@@ -254,6 +263,83 @@ pub fn evaluate(images: &[Gray]) -> Vec<AlgoReport> {
             .collect();
         let per_perturb = ALL_PERTURBS.iter().enumerate().map(|(pi, p)| (*p, sums[pi] / images.len().max(1) as f64)).collect();
         out.push(AlgoReport { name, hits, per_perturb, nearest_other });
+    }
+    out
+}
+
+// ---- matching variants (P1b): how to hash the reference and the photo so crop misalignment hurts less ----
+
+/// Window of `keep` x `keep` (fractions of the image) centred, then moved by (ox, oy) image fractions.
+pub fn window(g: &Gray, keep: f32, ox: f32, oy: f32) -> Gray {
+    let (cw, ch) = ((g.w as f32 * keep).round().max(8.0) as usize, (g.h as f32 * keep).round().max(8.0) as usize);
+    let x0 = (((g.w as f32 - cw as f32) / 2.0 + ox * g.w as f32).round().max(0.0) as usize).min(g.w - cw.min(g.w));
+    let y0 = (((g.h as f32 - ch as f32) / 2.0 + oy * g.h as f32).round().max(0.0) as usize).min(g.h - ch.min(g.h));
+    let (cw, ch) = (cw.min(g.w), ch.min(g.h));
+    let mut px = Vec::with_capacity(cw * ch);
+    for y in y0..y0 + ch {
+        px.extend_from_slice(&g.px[y * g.w + x0..y * g.w + x0 + cw]);
+    }
+    Gray { w: cw, h: ch, px }
+}
+
+/// A way to match: the reference is hashed once; the photo is hashed at every offset and the best (smallest) distance wins.
+pub struct Variant {
+    pub name: &'static str,
+    pub ref_keep: f32,
+    pub query_keep: f32,
+    pub offsets: &'static [(f32, f32)],
+}
+
+const GRID: [(f32, f32); 9] = [
+    (-0.03, -0.03), (0.0, -0.03), (0.03, -0.03), (-0.03, 0.0), (0.0, 0.0), (0.03, 0.0), (-0.03, 0.03), (0.0, 0.03), (0.03, 0.03),
+];
+
+pub const VARIANTS: [Variant; 4] = [
+    Variant { name: "full (baseline)", ref_keep: 1.0, query_keep: 1.0, offsets: &[(0.0, 0.0)] },
+    Variant { name: "inner 80%", ref_keep: 0.8, query_keep: 0.8, offsets: &[(0.0, 0.0)] },
+    Variant { name: "3x3 shifts (+-3%)", ref_keep: 1.0, query_keep: 0.94, offsets: &GRID },
+    Variant { name: "inner 80% + 3x3 shifts", ref_keep: 0.8, query_keep: 0.8, offsets: &GRID },
+];
+
+pub struct VariantReport {
+    pub variant: &'static str,
+    pub algo: &'static str,
+    pub hits: [f64; 17],
+    pub per_perturb: Vec<(Perturb, f64)>,
+    pub nearest_other: Vec<u32>,
+}
+
+pub fn evaluate_variants(images: &[Gray]) -> Vec<VariantReport> {
+    let mut out = Vec::new();
+    for (algo, pick) in [("dhash", dhash as fn(&Gray) -> u64), ("phash", phash)] {
+        for v in VARIANTS.iter() {
+            let refs: Vec<u64> = images.iter().map(|g| pick(&window(g, v.ref_keep, 0.0, 0.0))).collect();
+            let best = |g: &Gray, r: u64| -> u32 {
+                v.offsets.iter().map(|&(ox, oy)| hamming(r, pick(&window(g, v.query_keep, ox, oy)))).min().unwrap()
+            };
+            let (mut counts, mut total) = ([0usize; 17], 0usize);
+            let mut sums = vec![0f64; ALL_PERTURBS.len()];
+            for (i, g) in images.iter().enumerate() {
+                for (pi, p) in ALL_PERTURBS.iter().enumerate() {
+                    let d = best(&perturb(g, *p), refs[i]);
+                    sums[pi] += d as f64;
+                    total += 1;
+                    for t in d as usize..=16 {
+                        counts[t] += 1;
+                    }
+                }
+            }
+            let mut hits = [0f64; 17];
+            for t in 0..17 {
+                hits[t] = counts[t] as f64 / total.max(1) as f64;
+            }
+            // unperturbed photo of image i against every other reference j: the false-match distance
+            let nearest_other = (0..images.len())
+                .map(|i| (0..images.len()).filter(|&j| j != i).map(|j| best(&images[i], refs[j])).min().unwrap_or(64))
+                .collect();
+            let per_perturb = ALL_PERTURBS.iter().enumerate().map(|(pi, p)| (*p, sums[pi] / images.len().max(1) as f64)).collect();
+            out.push(VariantReport { variant: v.name, algo, hits, per_perturb, nearest_other });
+        }
     }
     out
 }
@@ -310,6 +396,25 @@ mod tests {
             let mean_other = r.nearest_other.iter().sum::<u32>() as f64 / imgs.len() as f64;
             assert!(mean_other > 8.0, "{} nearest-other {}", r.name, mean_other);
         }
+    }
+
+    #[test]
+    fn shift_grid_recovers_crop_jitter() {
+        let imgs: Vec<Gray> = (1..=8).map(|s| synth(s, 220, 160)).collect();
+        let rep = evaluate_variants(&imgs);
+        let mean = |algo: &str, var: &str| {
+            let r = rep.iter().find(|r| r.algo == algo && r.variant == var).unwrap();
+            r.per_perturb.iter().filter(|(p, _)| matches!(p, Perturb::CropJitter | Perturb::CropJitterNeg)).map(|(_, d)| d).sum::<f64>() / 2.0
+        };
+        assert!(mean("phash", "3x3 shifts (+-3%)") < mean("phash", "full (baseline)"));
+    }
+
+    #[test]
+    fn window_bounds() {
+        let g = Gray { w: 100, h: 80, px: vec![7; 8000] };
+        let w = window(&g, 0.94, 0.03, -0.03);
+        assert_eq!((w.w, w.h), (94, 75));
+        assert_eq!(w.px.len(), 94 * 75);
     }
 
     #[test]

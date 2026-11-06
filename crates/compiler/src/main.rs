@@ -292,7 +292,7 @@ fn cmd_apply(args: &[String]) {
 }
 
 fn cmd_phash_eval(args: &[String]) {
-    let dir = flag_value(args, "--images").unwrap_or_else(|| die("usage: coqc phash-eval --images DIR [--limit N]"));
+    let dir = flag_value(args, "--images").unwrap_or_else(|| die("usage: coqc phash-eval --images DIR [--limit N] [--variants]"));
     let limit: usize = flag_value(args, "--limit").map_or(usize::MAX, |d| d.parse().unwrap_or_else(|_| die("bad --limit")));
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| die(&e.to_string())).filter_map(|e| e.ok()).map(|e| e.path())
         .filter(|p| matches!(p.extension().and_then(|x| x.to_str()).map(|x| x.to_ascii_lowercase()).as_deref(), Some("jpg" | "jpeg" | "png"))).collect();
@@ -309,6 +309,18 @@ fn cmd_phash_eval(args: &[String]) {
         die("need at least 2 decodable images");
     }
     println!("{} images x {} perturbations", images.len(), coqc_phash::ALL_PERTURBS.len());
+    if args.iter().any(|a| a == "--variants") {
+        println!("\nmatching variants (reference hashed once; photo hashed at each offset, best distance wins)");
+        for r in coqc_phash::evaluate_variants(&images) {
+            let jit = r.per_perturb.iter().filter(|(p, _)| matches!(p, coqc_phash::Perturb::CropJitter | coqc_phash::Perturb::CropJitterNeg)).map(|(_, d)| d).sum::<f64>() / 2.0;
+            let mut n = r.nearest_other.clone();
+            n.sort();
+            let tail = r.per_perturb.iter().filter(|(p, _)| !matches!(p, coqc_phash::Perturb::CropJitter | coqc_phash::Perturb::CropJitterNeg)).map(|(_, d)| d).sum::<f64>() / (r.per_perturb.len() - 2) as f64;
+            println!("{:5} {:24} hit<=8 {:5.1}%  <=10 {:5.1}%  <=12 {:5.1}%  | crop-jitter mean {:5.2}  other-perturb mean {:4.2} | nearest different min {:2} p5 {:2} p50 {:2}",
+                r.algo, r.variant, r.hits[8] * 100.0, r.hits[10] * 100.0, r.hits[12] * 100.0, jit, tail, n[0], n[((n.len() - 1) as f64 * 0.05) as usize], n[(n.len() - 1) / 2]);
+        }
+        return;
+    }
     for r in coqc_phash::evaluate(&images) {
         println!("\n== {} ==", r.name);
         println!("same-art hit rate by max Hamming distance:");
