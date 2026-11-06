@@ -291,6 +291,78 @@ fn cmd_apply(args: &[String]) {
     println!("applied: {} ({}), sha256 {} verified ({:.2?})", out, mb(new.len() as u64), sha_hex(&new), t.elapsed());
 }
 
+fn cmd_art_hash(args: &[String]) {
+    let usage = "usage: coqc art-hash <bulk.jsonl|json> --cards <cards.coqd> --cache <art-hashes.tsv> -o <art.coqd> [--images DIR] [--todo todo.tsv]";
+    let bulk_path = args.first().filter(|a| !a.starts_with('-')).unwrap_or_else(|| die(usage));
+    let cards = flag_value(args, "--cards").unwrap_or_else(|| die(usage));
+    let cache_path = flag_value(args, "--cache").unwrap_or_else(|| die(usage));
+    let out = flag_value(args, "-o").unwrap_or_else(|| die(usage));
+    let t0 = Instant::now();
+    let (_, ds) = load(Path::new(&cards));
+    let bulk = coqc::arthash::scan_bulk(&rd(bulk_path)).unwrap_or_else(|e| die(&e));
+    let mut cache = std::fs::read_to_string(&cache_path).map(|t| coqc::arthash::parse_cache(&t)).unwrap_or_default();
+    let before = cache.len();
+    if let Some(dir) = flag_value(args, "--images") {
+        // files named <illustration_id>.jpg|jpeg|png; only illustrations without a cached hash are decoded
+        let mut seen = std::collections::HashSet::new();
+        for b in &bulk {
+            if cache.contains_key(&b.illustration_id) || !seen.insert(b.illustration_id.clone()) {
+                continue;
+            }
+            for ext in ["jpg", "jpeg", "png"] {
+                let p = Path::new(&dir).join(format!("{}.{ext}", b.illustration_id));
+                if p.exists() {
+                    match coqc_phash::load_gray(&p) {
+                        Ok(g) => {
+                            cache.insert(b.illustration_id.clone(), coqc_phash::art_phash(&g));
+                        }
+                        Err(e) => eprintln!("skip: {e}"),
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    std::fs::write(&cache_path, coqc::arthash::render_cache(&cache)).unwrap_or_else(|e| die(&e.to_string()));
+    let (t, r) = coqc::arthash::build(&ds, &bulk, &cache);
+    let bytes = t.encode().unwrap_or_else(|e| die(&e.to_string()));
+    std::fs::write(&out, &bytes).unwrap_or_else(|e| die(&e.to_string()));
+    if let Some(todo) = flag_value(args, "--todo") {
+        let text: String = r.todo.iter().map(|(i, u)| format!("{i}\t{u}\n")).collect();
+        std::fs::write(&todo, text).unwrap_or_else(|e| die(&e.to_string()));
+    }
+    println!("printings {} (with illustration {}), illustrations {}: hashed {} ({} new this run), to fetch {}", r.printings, r.printings_with_illustration, r.illustrations, r.illustrations_hashed, cache.len() - before, r.todo.len());
+    println!("rows hashed {} of {}", r.rows_hashed, t.hashes.len());
+    println!("art-hash overlay {out}: {} ({:.1}s)", mb(bytes.len() as u64), t0.elapsed().as_secs_f64());
+}
+
+/// Rank printings by art-hash distance to a photo/crop: the CLI prototype of the engine's `matchArtHash`.
+fn cmd_art_match(args: &[String]) {
+    let usage = "usage: coqc art-match <image> --overlay <art.coqd> --cards <cards.coqd> [--top N] [--max D]";
+    let img = args.first().filter(|a| !a.starts_with('-')).unwrap_or_else(|| die(usage));
+    let overlay = flag_value(args, "--overlay").unwrap_or_else(|| die(usage));
+    let cards = flag_value(args, "--cards").unwrap_or_else(|| die(usage));
+    let top: usize = flag_value(args, "--top").map_or(10, |v| v.parse().unwrap_or_else(|_| die("bad --top")));
+    let max: u32 = flag_value(args, "--max").map_or(64, |v| v.parse().unwrap_or_else(|_| die("bad --max")));
+    let t = coqc::arthash::ArtHashTable::decode(&rd(&overlay)).unwrap_or_else(|e| die(&e.to_string()));
+    let (_, ds) = load(Path::new(&cards));
+    let g = coqc_phash::load_gray(Path::new(img)).unwrap_or_else(|e| die(&e));
+    let q = coqc_phash::query_hashes(&g);
+    let t0 = Instant::now();
+    let mut hits: Vec<(u32, usize)> = t.hashes.iter().enumerate().filter_map(|(i, h)| {
+        let h = (*h)?;
+        let d = q.iter().map(|&x| coqc_phash::hamming(x, h)).min()?;
+        (d <= max).then_some((d, i))
+    }).collect();
+    hits.sort();
+    println!("{} candidate printings within {max} bits ({:.1} ms over {} rows)", hits.len(), t0.elapsed().as_secs_f64() * 1000.0, t.hashes.len());
+    for (d, i) in hits.into_iter().take(top) {
+        let p = &ds.printings[i];
+        println!("  d={d:2} row {i:>6} {:<6} {:<5} {}", p.set_code.as_deref().unwrap_or("-"), p.collector_number.as_deref().unwrap_or("-"),
+            ds.oracle[p.oracle_row as usize].name.as_deref().unwrap_or("?"));
+    }
+}
+
 fn cmd_phash_eval(args: &[String]) {
     let dir = flag_value(args, "--images").unwrap_or_else(|| die("usage: coqc phash-eval --images DIR [--limit N] [--variants]"));
     let limit: usize = flag_value(args, "--limit").map_or(usize::MAX, |d| d.parse().unwrap_or_else(|_| die("bad --limit")));
@@ -856,6 +928,8 @@ fn main() {
         "diff" => cmd_diff(rest),
         "synth" => cmd_synth(rest),
         "phash-eval" => cmd_phash_eval(rest),
+        "art-hash" => cmd_art_hash(rest),
+        "art-match" => cmd_art_match(rest),
         "generic-compile" => cmd_generic_compile(rest),
         "generic-overlay" => cmd_generic_overlay(rest),
         "demo-books" => cmd_demo_books(rest),

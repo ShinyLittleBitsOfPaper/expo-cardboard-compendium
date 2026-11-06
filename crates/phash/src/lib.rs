@@ -101,6 +101,17 @@ pub fn hash(g: &Gray) -> Hashes {
     Hashes { dhash: dhash(g), phash: phash(g) }
 }
 
+/// The stored/queried art hash: pHash of the inner 80% of the art (docs/phash-design.md, P1b: best variant on real art).
+pub fn art_phash(g: &Gray) -> u64 {
+    phash(&window(g, 0.8, 0.0, 0.0))
+}
+
+/// Photo-side hashes: the same inner-80% pHash of a 94% window at 3x3 shifts of +-3% (compare the best distance).
+/// The stored hash is `art_phash` of the reference art; shifts only exist on the query side.
+pub fn query_hashes(g: &Gray) -> Vec<u64> {
+    GRID.iter().map(|&(ox, oy)| art_phash(&window(g, 0.94, ox, oy))).collect()
+}
+
 pub fn hamming(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
 }
