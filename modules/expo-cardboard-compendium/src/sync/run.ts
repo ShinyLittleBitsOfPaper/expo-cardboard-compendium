@@ -3,7 +3,7 @@
 // SHA-256 was checked, and every swap is an atomic rename, so an interrupted sync leaves a working (older) dataset.
 
 import { parseManifest, resolve, SUPPORTED_MANIFEST_VERSION, type Asset, type Link, type Manifest } from './manifest';
-import { planSync, MODULE_FORMAT, type CardStep, type FullReason, type LocalState, type ModuleFormat } from './plan';
+import { planSync, planBytes, MODULE_FORMAT, type CardStep, type FullReason, type LocalState, type ModuleFormat } from './plan';
 
 export const DEFAULT_MANIFEST_URL =
   'https://github.com/ShinyLittleBitsOfPaper/expo-cardboard-compendium/releases/download/data-latest/manifest.json';
@@ -24,8 +24,11 @@ export interface EngineOps {
 
 export interface SyncDeps {
   fetchJson(url: string): Promise<unknown>;
-  /** Download `url` to `destPath` (plain filesystem path), replacing anything there. */
-  download(url: string, destPath: string): Promise<void>;
+  /**
+   * Download `url` to `destPath` (plain filesystem path), replacing anything there. `onBytes` (optional) is called with the
+   * bytes written so far; an implementation that cannot report progress may ignore it (the sync still reports completion).
+   */
+  download(url: string, destPath: string, onBytes?: (received: number) => void): Promise<void>;
   /** null when the file does not exist */
   readText(path: string): Promise<string | null>;
   writeText(path: string, text: string): Promise<void>;
@@ -33,12 +36,33 @@ export interface SyncDeps {
   engine: EngineOps;
 }
 
+export interface SyncProgress {
+  /** Human-readable step: 'cards', 'index', 'patch <stamp>', an overlay id, ... */
+  step: string;
+  /** Position of `step` within its group (1-based) and the group's size. */
+  index: number;
+  total: number;
+  /** Set on download events only. */
+  file?: string;
+  /** Bytes of `file` written so far and its published size. */
+  received?: number;
+  size?: number;
+  /** Bytes downloaded in this sync so far / expected in total (see `SyncOptions.onProgress`). */
+  bytesDone?: number;
+  bytesTotal?: number;
+}
+
 export interface SyncOptions {
   /** Directory (plain path) that holds cards.coqd, cards.coqi, <overlay>.coqd (prices.coqd) and state.json. */
   dir: string;
   manifestUrl?: string;
-  /** Called before each download/apply step. */
-  onProgress?: (e: { step: string; index: number; total: number }) => void;
+  /**
+   * Called before each download/apply step (no `file`), and while a file downloads (`file`, `received`, `size`, `bytesDone`,
+   * `bytesTotal`; at most about once per percent of that file, and once at its end). Use `bytesDone / bytesTotal` for one
+   * overall bar. `bytesTotal` starts at the planned download size and only grows (a patch that fails and falls back to the
+   * full files adds those files), so a bar can slow down but never jumps backwards.
+   */
+  onProgress?: (e: SyncProgress) => void;
   /** Test hook: override the module's reader formats. */
   moduleFormat?: ModuleFormat;
 }
@@ -86,7 +110,11 @@ function parseState(text: string | null): LocalState | null {
 export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResult> {
   const { engine } = deps;
   const paths = dataPaths(o.dir);
-  const progress = (step: string, index: number, total: number) => o.onProgress?.({ step, index, total });
+  let curStep = { step: '', index: 0, total: 0 };
+  const progress = (step: string, index: number, total: number) => {
+    curStep = { step, index, total };
+    o.onProgress?.({ step, index, total });
+  };
 
   await deps.mkdirs(o.dir);
   const rawManifest = await deps.fetchJson(o.manifestUrl ?? DEFAULT_MANIFEST_URL);
@@ -99,6 +127,8 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
   const { cards, index, overlays } = resolve(manifest);
   let local = parseState(await deps.readText(paths.state));
   const plan = planSync(manifest, local, o.moduleFormat ?? MODULE_FORMAT, { patchOverlays: true });
+  let bytesDone = 0;
+  let bytesTotal = planBytes(manifest, plan);
   if (plan.status === 'needs_app_update') {
     return { status: 'needs_app_update', patches: 0, overlays: 'unchanged', changed: false, required: plan.required };
   }
@@ -108,7 +138,20 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
   const fetchVerified = async (a: Asset, tmpName: string): Promise<string> => {
     const p = tmp(tmpName);
     await engine.removeFile(p);
-    await deps.download(a.url, p);
+    bytesTotal = Math.max(bytesTotal, bytesDone + a.size);
+    const emit = (received: number) =>
+      o.onProgress?.({ ...curStep, file: a.name, received, size: a.size, bytesDone: bytesDone + received, bytesTotal });
+    let lastPct = -1;
+    emit(0);
+    await deps.download(a.url, p, (received) => {
+      const pct = a.size > 0 ? Math.floor((Math.min(received, a.size) * 100) / a.size) : 0;
+      if (pct > lastPct && pct < 100) {
+        lastPct = pct;
+        emit(Math.min(received, a.size));
+      }
+    });
+    emit(a.size);
+    bytesDone += a.size;
     const got = await engine.sha256File(p);
     if (got.sha256 !== a.sha256 || got.size !== a.size) {
       await engine.removeFile(p);

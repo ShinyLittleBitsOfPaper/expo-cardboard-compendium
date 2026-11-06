@@ -1,0 +1,55 @@
+# Perceptual hashing (art match) — design, step P0
+
+Status 2026-11-05, 0.0.3-2: **plan only, no code.** Origin: slbop TODO #96 ("Perceptual-hash card-art matching", on hold because
+slbop has no server/pipeline to maintain). The compendium already has a daily pipeline, an overlay mechanism and a native engine,
+so the blocker is gone. Goal: given a photo of a card, narrow the candidate printings (the scanner's last unresolved signal, see
+slbop `scanMatchers.ts`).
+
+## What a hash can and cannot do
+- An **art hash** identifies the *illustration*. Every printing that reuses an illustration (most reprints) hashes the same, so it
+  separates "Lightning Bolt, art A" from "art B" but **not** two printings of art A. Frame, set symbol, border, collector number and
+  year (existing OCR signals) still decide those. It is a narrowing signal, never a sole identifier.
+- Do not hash the whole card for phase 1: frame/border/glare/perspective dominate the distance and the existing signals already cover
+  frame variants.
+
+## Proposed defaults (change before building)
+1. **What**: 64-bit dHash of the `art_crop` image (9x8 grayscale, horizontal gradient), plus a second 64-bit pHash (32x32 DCT, low 8x8)
+   so the on-device threshold can be calibrated on whichever separates real scans better. Stored as 4 u32 columns.
+2. **Per illustration, not per printing**: hash once per `illustration_id` (~half the printings share one), copy to every printing row.
+   *Needs a schema addition*: `illustration_id` (Uuid) is not in `mtg_schema()` today; cards without one (tokens, some layouts)
+   get no hash. Multi-face cards: hash the front face's art; scanning a back face is out of scope.
+3. **Where it lives**: a second overlay `art-hash` (columnar Int table, row i = printing i, like prices) in the daily release, patched
+   with ordinary `.coqp`. ~120k rows x 16 bytes, compresses little (~1.5 MB full); a day's patch is the new illustrations only.
+   No schema change for the base dataset beyond `illustration_id`.
+4. **Images** come from Scryfall's CDN (`cards.scryfall.io/art_crop/...`), only for illustrations not hashed in the previous release
+   (the cron keeps the previous overlay and `--prev` row stability, as it does for cards). First run ~60k small JPEGs (~3-4 GB
+   transfer, a one-off; do it from the user's machine or a throttled workflow, not on every cron). **Needs Scryfall's permission
+   answer** (still pending for the data release) and a descriptive User-Agent; hashes only, no images are stored or redistributed.
+5. **One implementation of the hash**: the Rust engine exposes `hashImageFile(path, crop?)` (decode with the `image` crate, area
+   downscale) and the *compiler uses the same function*. Hashing in JS/expo-image-manipulator on the device and in Rust at compile
+   time would differ by resampling filter and drift the distances. Cost: the `image` crate (jpeg/png only, no default features) in
+   the native libs; measure the size delta.
+6. **Matching**: `matchArtHash(hash, {maxDistance, rows?})` returns rows ordered by Hamming distance; brute force over ~60k
+   unique hashes is a few ms (popcount), no index needed. A `scope` (the candidate rows the OCR stages left) makes it near-free.
+7. **Threshold**: not guessed. Calibrate from slbop's scan-debug captures (`scanner-log.txt` + the session export) against known
+   cards; the doc below says how.
+
+## Steps
+- **P0 (this doc)** decisions below.
+- **P1 evaluation tool, no engine change**: `coqc phash-eval --images DIR`: hash a list of art crops (dHash + pHash), then perturb each
+  (blur, +-20% brightness/contrast, +-2 deg rotation, 3% crop jitter, JPEG q40, a mild perspective warp) and report, per algorithm:
+  same-art hit rate at distances 0..16 and the nearest *different*-illustration distance. Needs ~300 art crops from the user
+  (a mix of near-identical arts, e.g. 20 Lightning Bolts, basic lands) because the sandbox cannot reach Scryfall.
+- **P2 schema + compile**: `illustration_id` column; `coqc art-hash` (incremental over `--prev`), overlay `art-hash` in `data-build.sh`,
+  manifest dataset (role overlay, `of` cards), TS sync already handles any overlay.
+- **P3 engine/module**: `hashImageFile`, `matchArtHash`, attach the overlay, node/Rust tests, golden hashes for 5 fixture images.
+- **P4 slbop**: wire the slot in `scanMatchers.ts`; calibrate thresholds on real captures; ranking-only first (like the promo-stamp signal),
+  never hides a candidate.
+
+## Decisions needed
+1. Art crop only (default) or also a full-card hash?
+2. Per-illustration hashing with an `illustration_id` schema column (default)?
+3. dHash + pHash both stored (default) or dHash only?
+4. First bulk image pass: your machine (default, one-off script) or the GitHub workflow (slower, rate-limited, needs the permission reply)?
+5. OK to add the `image` crate to the native module (size measured in P3)?
+6. Can you collect ~300 art crops for P1, or should P1 be a script that downloads them for you to run?

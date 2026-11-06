@@ -85,6 +85,9 @@ failure, never leave the app without a working dataset. Planning logic is pure a
 7. Conformance corpus: a few hundred queries whose result sets are compared against Scryfall's own search on the same day (rate-limited,
    with a UA), run on demand; the list of known differences goes in `docs/search.md`.
 
+## Perceptual hashing
+Planned, see `docs/phash-design.md` (P0 decisions pending).
+
 ## Milestone 4: before slbop depends on it
 Done 0.0.2-33 (docs only): tagged-tarball distribution and publish checklist in `docs/release.md`; data-source adapter note
 (Scryfall bulk now, MTGJSON shim as fallback if permission is refused) in `docs/adapters.md`. The "dataset-agnostic" direction is now

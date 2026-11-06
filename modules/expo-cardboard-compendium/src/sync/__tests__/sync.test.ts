@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { parseManifest, resolve, type Dataset, type Manifest } from '../manifest';
 import { planSync, planBytes, MODULE_FORMAT, type CardsPlan, type LocalState } from '../plan';
-import { runSync, dataPaths, openLocal, type SyncDeps } from '../run';
+import { runSync, dataPaths, openLocal, type SyncDeps, type SyncProgress } from '../run';
 
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const DIR = '/data/cc';
@@ -72,10 +72,11 @@ function world(rel: Release) {
       log.push(`GET ${url}`);
       return JSON.parse(JSON.stringify(rel.manifest));
     },
-    async download(url, dest) {
+    async download(url, dest, onBytes) {
       log.push(`DL ${url.split('/').pop()}`);
       const b = rel.files.get(url);
       if (!b) throw new Error(`404 ${url}`);
+      for (const q of [0.25, 0.5, 0.75, 1]) onBytes?.(Math.floor(b.length * q));
       fs.set(dest, b);
     },
     async readText(p) {
@@ -402,4 +403,37 @@ test('a non-MTG dataset (base "books") resolves: ids do not matter, roles do', a
   const noIdx = JSON.parse(JSON.stringify(r.manifest)) as Manifest;
   noIdx.datasets = noIdx.datasets.filter((d) => d.role !== 'index');
   assert.throws(() => resolve(noIdx), /no index of "books"/);
+});
+
+test('sync: progress reports bytes per file and overall, monotonic, ending at the planned total', async () => {
+  const w = world(release(1));
+  const ev: SyncProgress[] = [];
+  await runSync(w.deps, { dir: DIR, onProgress: (e) => ev.push(e) });
+  const dl = ev.filter((e) => e.file);
+  assert.ok(dl.length > 0);
+  for (const e of dl) {
+    assert.ok(e.received! <= e.size! && e.bytesDone! <= e.bytesTotal!);
+  }
+  for (let i = 1; i < dl.length; i++) assert.ok(dl[i].bytesDone! >= dl[i - 1].bytesDone!);
+  const last = dl[dl.length - 1];
+  assert.equal(last.bytesDone, last.bytesTotal);
+  assert.equal(last.received, last.size);
+  // step events (no file) are still emitted as before
+  assert.ok(ev.some((e) => !e.file && e.step === 'cards'));
+});
+
+test('sync: progress total grows (never shrinks) when a patch falls back to the full files', async () => {
+  const w = world(release(1));
+  await runSync(w.deps, { dir: DIR });
+  const rel = release(2, { chainFrom: [1] });
+  rel.files.set(resolve(rel.manifest).cards.patches[0].patch.url, Buffer.from('tampered'));
+  w.setRelease(rel);
+  const ev: SyncProgress[] = [];
+  await runSync(w.deps, { dir: DIR, onProgress: (e) => ev.push(e) });
+  const dl = ev.filter((e) => e.file);
+  for (let i = 1; i < dl.length; i++) {
+    assert.ok(dl[i].bytesDone! >= dl[i - 1].bytesDone!);
+    assert.ok(dl[i].bytesTotal! >= dl[i - 1].bytesTotal!);
+  }
+  assert.ok(dl.every((e) => e.bytesDone! <= e.bytesTotal!));
 });

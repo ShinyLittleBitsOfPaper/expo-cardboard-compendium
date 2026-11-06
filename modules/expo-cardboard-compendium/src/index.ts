@@ -65,7 +65,8 @@ export const applyIndexDelta = (path: string) => call<EngineInfo>('applyIndexDel
 
 // --- Data sync (docs/roadmap.md, Milestone 2) -------------------------------------------------------------------
 export { dataPaths, DEFAULT_MANIFEST_URL } from './sync/run';
-export type { SyncOptions, SyncResult } from './sync/run';
+export type { SyncOptions, SyncResult, SyncProgress } from './sync/run';
+export { planBytes } from './sync/plan';
 export { sync, openSynced } from './sync/sync';
 export { adaptAppQuery } from './sync/appQuery';
 export type { AppQuery, AppQueryOptions } from './sync/appQuery';
