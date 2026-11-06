@@ -86,7 +86,7 @@ failure, never leave the app without a working dataset. Planning logic is pure a
    with a UA), run on demand; the list of known differences goes in `docs/search.md`.
 
 ## Perceptual hashing
-Planned, see `docs/phash-design.md` (P0 decisions pending).
+P1 evaluation tool built (0.0.3-3), see `docs/phash-design.md`; P2-P4 wait for real art-crop results.
 
 ## Milestone 4: before slbop depends on it
 Done 0.0.2-33 (docs only): tagged-tarball distribution and publish checklist in `docs/release.md`; data-source adapter note

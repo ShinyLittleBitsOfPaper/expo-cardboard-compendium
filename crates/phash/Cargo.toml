@@ -1,0 +1,10 @@
+[package]
+name = "coqc-phash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Perceptual hashes (dHash, pHash) of card art, plus the perturbation harness used to calibrate them"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

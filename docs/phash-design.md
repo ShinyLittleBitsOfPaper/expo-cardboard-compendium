@@ -1,6 +1,6 @@
 # Perceptual hashing (art match) — design, step P0
 
-Status 2026-11-05, 0.0.3-2: **plan only, no code.** Origin: slbop TODO #96 ("Perceptual-hash card-art matching", on hold because
+Status 2026-11-06, 0.0.3-3: **P1 built** (`coqc phash-eval`, crate `crates/phash`, `scripts/fetch-art-crops.sh`) on the defaults below, which were taken as accepted when the owner said "continue" (decisions 1-5 are NOT explicitly confirmed; P2+ waits for real P1 numbers). Earlier: 0.0.3-2 plan only. Origin: slbop TODO #96 ("Perceptual-hash card-art matching", on hold because
 slbop has no server/pipeline to maintain). The compendium already has a daily pipeline, an overlay mechanism and a native engine,
 so the blocker is gone. Goal: given a photo of a card, narrow the candidate printings (the scanner's last unresolved signal, see
 slbop `scanMatchers.ts`).
@@ -53,3 +53,10 @@ slbop `scanMatchers.ts`).
 4. First bulk image pass: your machine (default, one-off script) or the GitHub workflow (slower, rate-limited, needs the permission reply)?
 5. OK to add the `image` crate to the native module (size measured in P3)?
 6. Can you collect ~300 art crops for P1, or should P1 be a script that downloads them for you to run?
+
+## P1 as built (0.0.3-3)
+- `crates/phash` (`coqc-phash`): `load_gray` (image crate, jpeg+png only), hand-written `area_resize` (deterministic f32, same code the engine will reuse), `dhash` (9x8), `phash` (32x32 DCT, low 8x8, median split, DC dropped), `hamming`, ten perturbations (blur, brightness +-20%, contrast +-20%, rotation +-2 deg, 3% crop jitter, JPEG q40, mild perspective), `evaluate`.
+- `coqc phash-eval --images DIR [--limit N]` prints per algorithm: same-art hit rate at distance 0..16, mean distance per perturbation, and the nearest DIFFERENT image distance (min/p5/p50, plus images with a neighbour within 8 bits). Pick the threshold below the nearest-different minimum and above the perturbation tail.
+- `scripts/fetch-art-crops.sh OUT_DIR [N=300]`: Scryfall search -> art_crop JPEGs (near-identical arts: Lightning Bolt, basics, Counterspell, Llanowar Elves + random rarities), polite UA and 100 ms spacing. Needs curl + jq; the sandbox cannot reach Scryfall, so the user runs it.
+- Smoke run on 30 synthetic value-noise images (NOT evidence about real art): both hashes ~0 bits under brightness/contrast/blur/JPEG, 3-4 under +-2 deg rotation, 1-2 under perspective, **11-12 under a 3% crop jitter** (the weak spot: alignment error in the on-device art crop will matter more than tone), nearest different image 18+. Smooth synthetic images (sinusoids) made dHash collapse across seeds and pHash flip on noise, so use real art.
+- Not built: the 5 golden-hash fixture images (P3), `illustration_id` column and `coqc art-hash` (P2).

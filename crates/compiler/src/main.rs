@@ -291,6 +291,45 @@ fn cmd_apply(args: &[String]) {
     println!("applied: {} ({}), sha256 {} verified ({:.2?})", out, mb(new.len() as u64), sha_hex(&new), t.elapsed());
 }
 
+fn cmd_phash_eval(args: &[String]) {
+    let dir = flag_value(args, "--images").unwrap_or_else(|| die("usage: coqc phash-eval --images DIR [--limit N]"));
+    let limit: usize = flag_value(args, "--limit").map_or(usize::MAX, |d| d.parse().unwrap_or_else(|_| die("bad --limit")));
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| die(&e.to_string())).filter_map(|e| e.ok()).map(|e| e.path())
+        .filter(|p| matches!(p.extension().and_then(|x| x.to_str()).map(|x| x.to_ascii_lowercase()).as_deref(), Some("jpg" | "jpeg" | "png"))).collect();
+    paths.sort();
+    paths.truncate(limit);
+    let mut images = Vec::new();
+    for p in &paths {
+        match coqc_phash::load_gray(p) {
+            Ok(g) => images.push(g),
+            Err(e) => eprintln!("skip: {e}"),
+        }
+    }
+    if images.len() < 2 {
+        die("need at least 2 decodable images");
+    }
+    println!("{} images x {} perturbations", images.len(), coqc_phash::ALL_PERTURBS.len());
+    for r in coqc_phash::evaluate(&images) {
+        println!("\n== {} ==", r.name);
+        println!("same-art hit rate by max Hamming distance:");
+        for t in (0..=16).step_by(1) {
+            println!("  <= {t:2}: {:5.1}%", r.hits[t] * 100.0);
+        }
+        println!("mean distance per perturbation:");
+        for (p, d) in &r.per_perturb {
+            println!("  {p:?}: {d:.2}");
+        }
+        let mut n = r.nearest_other.clone();
+        n.sort();
+        let pct = |q: f64| n[((n.len() - 1) as f64 * q) as usize];
+        println!("nearest DIFFERENT image: min {} p5 {} p50 {} (a threshold must stay below the low end)", n[0], pct(0.05), pct(0.5));
+        let close: Vec<_> = r.nearest_other.iter().enumerate().filter(|(_, d)| **d <= 8).map(|(i, d)| format!("{} (d={d})", paths[i].file_name().unwrap().to_string_lossy())).collect();
+        if !close.is_empty() {
+            println!("images with a different-image neighbour within 8 bits: {}", close.join(", "));
+        }
+    }
+}
+
 fn cmd_synth(args: &[String]) {
     if args.len() < 2 {
         die("usage: coqc synth <n> <out.jsonl> [--day N]");
@@ -798,6 +837,7 @@ fn main() {
         "inspect" => cmd_inspect(rest),
         "diff" => cmd_diff(rest),
         "synth" => cmd_synth(rest),
+        "phash-eval" => cmd_phash_eval(rest),
         "generic-compile" => cmd_generic_compile(rest),
         "generic-overlay" => cmd_generic_overlay(rest),
         "demo-books" => cmd_demo_books(rest),

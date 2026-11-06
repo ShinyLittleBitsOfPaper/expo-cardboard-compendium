@@ -18,6 +18,7 @@ path = "src/main.rs"
 coqc-format = { path = "../format" }
 coqc-mtg = { path = "../mtg" }
 coqc-generic = { path = "../generic" }
+coqc-phash = { path = "../phash" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
