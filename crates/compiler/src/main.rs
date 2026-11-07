@@ -379,8 +379,9 @@ fn cmd_art_eval(args: &[String]) {
     let name_of = |i: usize| ds.oracle[ds.printings[i].oracle_row as usize].name.clone().unwrap_or_default();
     let mut dirs: Vec<_> = std::fs::read_dir(dir).unwrap_or_else(|e| die(&e.to_string())).filter_map(|e| e.ok()).map(|e| e.path()).collect();
     dirs.sort_by_key(|p| p.file_name().and_then(|n| n.to_str()).and_then(|n| n.rsplit('-').next()).and_then(|n| n.parse::<u32>().ok()).unwrap_or(0));
-    println!("{:<18} {:<28} {:>7} {:>9} {:>11} {:>14}", "capture", "truth", "d_truth", "rank", "", "best other (d)");
+    println!("{:<18} {:<28} {:>7} {:>9} {:>10} {:>5} {:>14}", "capture", "truth", "d_truth", "rank", "name-rank", "arts", "best other (d)");
     let (mut n, mut top1, mut within) = (0, 0, [0usize; 5]);
+    let (mut multi, mut multi_top1) = (0usize, 0usize);
     for d in dirs {
         let Ok(meta) = std::fs::read(d.join("meta.json")) else { continue };
         let Ok(m) = serde_json::from_slice::<serde_json::Value>(&meta) else { continue };
@@ -399,12 +400,22 @@ fn cmd_art_eval(args: &[String]) {
                 if di < best_other.0 && name_of(i) != tname { best_other = (di, name_of(i)); }
             }
         }
+        // name-restricted: only printings of the same card, counting distinct art hashes (printings with the same art can never be told apart)
+        let (mut nbetter, mut arts) = (0usize, std::collections::HashSet::new());
+        for (i, p) in ds.printings.iter().enumerate() {
+            if p.oracle_row != ds.printings[ti].oracle_row { continue; }
+            if let Some(h) = t.hashes[i] {
+                arts.insert(h);
+                if Some(h) != t.hashes[ti] && dist(Some(h)).unwrap() < dt { nbetter += 1; }
+            }
+        }
+        if arts.len() > 1 { multi += 1; if nbetter == 0 { multi_top1 += 1; } }
         n += 1;
         if better == 0 { top1 += 1; }
         for (k, th) in [6u32, 8, 10, 12, 14].iter().enumerate() { if dt <= *th { within[k] += 1; } }
-        println!("{:<18} {:<28} {:>7} {:>9} {:>11} {:>8} {}", d.file_name().unwrap().to_string_lossy(), tname, dt, better + 1, "-", best_other.0, best_other.1);
+        println!("{:<18} {:<28} {:>7} {:>9} {:>10} {:>5} {:>8} {}", d.file_name().unwrap().to_string_lossy(), tname, dt, better + 1, nbetter + 1, arts.len(), best_other.0, best_other.1);
     }
-    println!("\n{n} labelled captures: truth is the best art match (ties by identical hash count as best) in {top1}; truth within 6/8/10/12/14 bits: {}/{}/{}/{}/{}", within[0], within[1], within[2], within[3], within[4]);
+    println!("\n{n} labelled captures: truth is the best art match (ties by identical hash count as best) in {top1}; truth within 6/8/10/12/14 bits: {}/{}/{}/{}/{}\nname-restricted: of the {multi} captures whose card has more than one distinct art, the true art ranks first among that card's printings in {multi_top1}", within[0], within[1], within[2], within[3], within[4]);
 }
 
 fn cmd_phash_eval(args: &[String]) {
