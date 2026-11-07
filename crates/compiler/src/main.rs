@@ -367,6 +367,46 @@ fn cmd_art_match(args: &[String]) {
     }
 }
 
+/// Score the art match against labelled scan captures (meta.json `label.reviewed.scryfallId` is the truth).
+fn cmd_art_eval(args: &[String]) {
+    let usage = "usage: coqc art-eval <captures-dir> --overlay <art.coqd> --cards <cards.coqd>";
+    let dir = args.first().filter(|a| !a.starts_with('-')).unwrap_or_else(|| die(usage));
+    let overlay = flag_value(args, "--overlay").unwrap_or_else(|| die(usage));
+    let cards = flag_value(args, "--cards").unwrap_or_else(|| die(usage));
+    let t = coqc::arthash::ArtHashTable::decode(&rd(&overlay)).unwrap_or_else(|e| die(&e.to_string()));
+    let (_, ds) = load(Path::new(&cards));
+    let by_sid: std::collections::HashMap<[u8; 16], usize> = ds.printings.iter().enumerate().map(|(i, p)| (p.scryfall_id, i)).collect();
+    let name_of = |i: usize| ds.oracle[ds.printings[i].oracle_row as usize].name.clone().unwrap_or_default();
+    let mut dirs: Vec<_> = std::fs::read_dir(dir).unwrap_or_else(|e| die(&e.to_string())).filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    dirs.sort_by_key(|p| p.file_name().and_then(|n| n.to_str()).and_then(|n| n.rsplit('-').next()).and_then(|n| n.parse::<u32>().ok()).unwrap_or(0));
+    println!("{:<18} {:<28} {:>7} {:>9} {:>11} {:>14}", "capture", "truth", "d_truth", "rank", "", "best other (d)");
+    let (mut n, mut top1, mut within) = (0, 0, [0usize; 5]);
+    for d in dirs {
+        let Ok(meta) = std::fs::read(d.join("meta.json")) else { continue };
+        let Ok(m) = serde_json::from_slice::<serde_json::Value>(&meta) else { continue };
+        let Some(truth) = m.pointer("/label/reviewed/scryfallId").and_then(|v| v.as_str()).and_then(coqc_mtg::json::parse_uuid) else { continue };
+        let Some(&ti) = by_sid.get(&truth) else { continue };
+        let Ok(g0) = coqc_phash::load_gray(&d.join("crop.jpg")) else { continue };
+        let q = coqc_phash::query_hashes(&coqc_phash::card_art_region(&g0));
+        let dist = |h: Option<u64>| h.map(|h| q.iter().map(|&x| coqc_phash::hamming(x, h)).min().unwrap());
+        let Some(dt) = dist(t.hashes[ti]) else { println!("{:<18} {:<28} (truth printing has no art hash)", d.file_name().unwrap().to_string_lossy(), name_of(ti)); continue };
+        let tname = name_of(ti);
+        // rank = number of printings with a strictly smaller distance, +1; printings sharing the truth's hash are not "better"
+        let (mut better, mut best_other) = (0usize, (64u32, String::new()));
+        for (i, h) in t.hashes.iter().enumerate() {
+            if let Some(di) = dist(*h) {
+                if di < dt && t.hashes[i] != t.hashes[ti] { better += 1; }
+                if di < best_other.0 && name_of(i) != tname { best_other = (di, name_of(i)); }
+            }
+        }
+        n += 1;
+        if better == 0 { top1 += 1; }
+        for (k, th) in [6u32, 8, 10, 12, 14].iter().enumerate() { if dt <= *th { within[k] += 1; } }
+        println!("{:<18} {:<28} {:>7} {:>9} {:>11} {:>8} {}", d.file_name().unwrap().to_string_lossy(), tname, dt, better + 1, "-", best_other.0, best_other.1);
+    }
+    println!("\n{n} labelled captures: truth is the best art match (ties by identical hash count as best) in {top1}; truth within 6/8/10/12/14 bits: {}/{}/{}/{}/{}", within[0], within[1], within[2], within[3], within[4]);
+}
+
 fn cmd_phash_eval(args: &[String]) {
     let dir = flag_value(args, "--images").unwrap_or_else(|| die("usage: coqc phash-eval --images DIR [--limit N] [--variants]"));
     let limit: usize = flag_value(args, "--limit").map_or(usize::MAX, |d| d.parse().unwrap_or_else(|_| die("bad --limit")));
@@ -934,6 +974,7 @@ fn main() {
         "phash-eval" => cmd_phash_eval(rest),
         "art-hash" => cmd_art_hash(rest),
         "art-match" => cmd_art_match(rest),
+        "art-eval" => cmd_art_eval(rest),
         "generic-compile" => cmd_generic_compile(rest),
         "generic-overlay" => cmd_generic_overlay(rest),
         "demo-books" => cmd_demo_books(rest),
