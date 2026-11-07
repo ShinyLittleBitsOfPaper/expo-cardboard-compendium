@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Download the art crops listed by `coqc art-hash ... --todo todo.tsv` (illustration_id<TAB>url), named <illustration_id>.jpg.
-# Usage: scripts/fetch-art.sh todo.tsv OUT_DIR [PARALLEL=16] [BATCH=1000]
-# Uses curl's own parallel mode (connection reuse + many transfers at once): a single request can take many seconds on a
+# Usage: scripts/fetch-art.sh todo.tsv OUT_DIR [PARALLEL=8] [BATCH=500]
+# Uses curl's own parallel mode over plain HTTP/1.1 (one connection per transfer: with HTTP/2 multiplexing, one reset connection killed every in-flight download at once): a single request can take many seconds on a
 # slow link, so per-file curl with a few workers cannot finish ~60k images. Resumable (existing files are skipped; rerun
 # after any interruption), polite (descriptive User-Agent), one progress line per batch. Needs curl >= 7.66.
 # Run it from your machine; Scryfall's permission reply is still pending for any automated/cron use.
 set -euo pipefail
-LIST="${1:?usage: fetch-art.sh todo.tsv OUT_DIR [PARALLEL] [BATCH]}"; OUT="${2:?}"; PAR="${3:-16}"; BATCH="${4:-1000}"
+LIST="${1:?usage: fetch-art.sh todo.tsv OUT_DIR [PARALLEL] [BATCH]}"; OUT="${2:?}"; PAR="${3:-8}"; BATCH="${4:-500}"
 UA="expo-cardboard-compendium-art-hash/0.0.3 (github.com/ShinyLittleBitsOfPaper/expo-cardboard-compendium)"
 mkdir -p "$OUT"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -21,7 +21,7 @@ split -l "$BATCH" -d -a 5 "$TMP/pending" "$TMP/b."
 DONE=0
 for b in "$TMP"/b.?????; do
   awk -F'\t' -v out="$OUT" '{printf "url = \"%s\"\noutput = \"%s/%s.jpg\"\n", $2, out, $1}' "$b" > "$b.cfg"
-  curl -sS --fail --parallel --parallel-max "$PAR" --connect-timeout 20 --max-time 180 --retry 3 --retry-delay 2 \
+  curl -sS --fail --parallel --parallel-max "$PAR" --http1.1 --connect-timeout 20 --max-time 60 --retry 2 --retry-delay 3 \
        "${EXTRA[@]}" -A "$UA" -K "$b.cfg" || echo "some downloads in this batch failed (rerun to retry them)" >&2
   DONE=$((DONE + $(wc -l < "$b")))
   echo "$(date +%T) $DONE/$TOTAL requested, $(find "$OUT" -name '*.jpg' -size +0 | wc -l) images on disk"
