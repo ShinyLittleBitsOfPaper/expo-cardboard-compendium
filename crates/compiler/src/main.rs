@@ -338,7 +338,7 @@ fn cmd_art_hash(args: &[String]) {
 
 /// Rank printings by art-hash distance to a photo/crop: the CLI prototype of the engine's `matchArtHash`.
 fn cmd_art_match(args: &[String]) {
-    let usage = "usage: coqc art-match <image> --overlay <art.coqd> --cards <cards.coqd> [--top N] [--max D]";
+    let usage = "usage: coqc art-match <image> --overlay <art.coqd> --cards <cards.coqd> [--top N] [--max D] [--card]";
     let img = args.first().filter(|a| !a.starts_with('-')).unwrap_or_else(|| die(usage));
     let overlay = flag_value(args, "--overlay").unwrap_or_else(|| die(usage));
     let cards = flag_value(args, "--cards").unwrap_or_else(|| die(usage));
@@ -346,7 +346,11 @@ fn cmd_art_match(args: &[String]) {
     let max: u32 = flag_value(args, "--max").map_or(64, |v| v.parse().unwrap_or_else(|_| die("bad --max")));
     let t = coqc::arthash::ArtHashTable::decode(&rd(&overlay)).unwrap_or_else(|e| die(&e.to_string()));
     let (_, ds) = load(Path::new(&cards));
-    let g = coqc_phash::load_gray(Path::new(img)).unwrap_or_else(|e| die(&e));
+    let mut g = coqc_phash::load_gray(Path::new(img)).unwrap_or_else(|e| die(&e));
+    if args.iter().any(|a| a == "--card") {
+        // the image is a whole straightened card (the scanner's crop.jpg): cut out the art box first
+        g = coqc_phash::card_art_region(&g);
+    }
     let q = coqc_phash::query_hashes(&g);
     let t0 = Instant::now();
     let mut hits: Vec<(u32, usize)> = t.hashes.iter().enumerate().filter_map(|(i, h)| {

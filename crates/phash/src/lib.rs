@@ -101,6 +101,22 @@ pub fn hash(g: &Gray) -> Hashes {
     Hashes { dhash: dhash(g), phash: phash(g) }
 }
 
+/// The art box of a straightened, tightly cropped modern-frame card image (x 8.3-91.7%, y 11.3-55%; matches Scryfall's art_crop
+/// closely on standard frames, see docs/phash-design.md). Old-border, full-art and borderless cards sit a little differently, so
+/// the +-3% query shifts matter. Returns the whole image if it is too small to cut.
+pub fn card_art_region(card: &Gray) -> Gray {
+    let (x0, y0) = ((card.w as f32 * 0.083).round() as usize, (card.h as f32 * 0.113).round() as usize);
+    let (x1, y1) = ((card.w as f32 * 0.917).round() as usize, (card.h as f32 * 0.55).round() as usize);
+    if x1 <= x0 + 8 || y1 <= y0 + 8 || x1 > card.w || y1 > card.h {
+        return card.clone();
+    }
+    let mut px = Vec::with_capacity((x1 - x0) * (y1 - y0));
+    for y in y0..y1 {
+        px.extend_from_slice(&card.px[y * card.w + x0..y * card.w + x1]);
+    }
+    Gray { w: x1 - x0, h: y1 - y0, px }
+}
+
 /// The stored/queried art hash: pHash of the inner 80% of the art (docs/phash-design.md, P1b: best variant on real art).
 pub fn art_phash(g: &Gray) -> u64 {
     phash(&window(g, 0.8, 0.0, 0.0))
@@ -441,6 +457,14 @@ mod tests {
             r.per_perturb.iter().filter(|(p, _)| matches!(p, Perturb::CropJitter | Perturb::CropJitterNeg)).map(|(_, d)| d).sum::<f64>() / 2.0
         };
         assert!(mean("phash", "3x3 shifts (+-3%)") < mean("phash", "full (baseline)"));
+    }
+
+    #[test]
+    fn card_art_region_dims() {
+        let g = Gray { w: 1000, h: 1400, px: vec![0; 1_400_000] };
+        let r = card_art_region(&g);
+        assert_eq!((r.w, r.h), (834, 612));
+        assert_eq!(r.px.len(), 834 * 612);
     }
 
     #[test]
