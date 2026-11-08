@@ -90,6 +90,7 @@ dependencies = [
  "coqc-format",
  "coqc-generic",
  "coqc-mtg",
+ "coqc-phash",
  "serde_json",
  "sha2",
  "zstd",

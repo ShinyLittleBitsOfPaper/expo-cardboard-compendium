@@ -264,3 +264,51 @@ fn batch_lookups_and_persistent_sets() {
     assert_eq!(e2.call("loadSets", &json!({"path": sp})).unwrap()["loaded"], 0);
     assert_eq!(e2.call("loadSets", &json!({"path": dir.join("none.json")})).unwrap()["loaded"], 0);
 }
+
+#[test]
+fn art_hash_match() {
+    use coqc::arthash::ArtHashTable;
+    let dir = tmp("art");
+    let (a, _) = compile(&fx("sample_a.jsonl"), None, &opts()).unwrap();
+    let (bytes, _) = write(&a).unwrap();
+    let (coqd, coqi_p, ov) = (dir.join("c.coqd"), dir.join("c.coqi"), dir.join("art.coqd"));
+    std::fs::write(&coqd, &bytes).unwrap();
+    let st = coqc_format::coqd::read_store(&bytes).unwrap();
+    let rows = st.table("printing").unwrap().1.rows();
+    assert!(rows >= 4);
+    // row 0 and 1: art A (identical hash), row 2: art B, row 3: no hash; the rest unhashed
+    let (ha, hb) = (0x0f0f_0f0f_0f0f_0f0fu64, 0xffff_0000_ffff_0000u64);
+    let mut hashes = vec![None; rows];
+    hashes[0] = Some(ha);
+    hashes[1] = Some(ha);
+    hashes[2] = Some(hb);
+    std::fs::write(&ov, ArtHashTable { cards_epoch: st.epoch, date: 20261107, hashes }.encode().unwrap()).unwrap();
+    let mut e = Engine::open(&coqd, Some(&coqi_p)).unwrap();
+    assert!(e.call("matchArtHash", &json!({"rows": [0], "hashes": ["0000000000000000"]})).unwrap_err().contains("arthash overlay"));
+    e.call("attachOverlay", &json!({"id": "arthash", "path": ov})).unwrap();
+
+    // a photo 3 bits away from art A (one of the 9 shifted hashes is what counts)
+    let near_a = format!("{:016x}", ha ^ 0b111);
+    let far = format!("{:016x}", !ha);
+    let m = e.call("matchArtHash", &json!({"rows": [2, 0, 1, 3], "hashes": [far, near_a]})).unwrap();
+    let ranked = m["ranked"].as_array().unwrap();
+    assert_eq!(ranked.len(), 3);
+    assert_eq!(ranked[0]["distance"], 3);
+    assert_eq!(ranked[1]["distance"], 3, "printings sharing art tie");
+    assert_eq!(ranked[2]["row"], 2);
+    assert_eq!(m["unhashed"], json!([3]));
+    assert_eq!(m["best"], 3);
+    assert_eq!(m["decisive"], true);
+    let db = (hb ^ !ha).count_ones().min((hb ^ (ha ^ 0b111)).count_ones());
+    assert_eq!(m["margin"], db - 3, "next distinct art minus best");
+    assert_eq!(m["confident"], true);
+    // only one distinct art among the candidates: nothing to decide
+    let one = e.call("matchArtHash", &json!({"rows": [0, 1], "hashes": [format!("{ha:016x}")]})).unwrap();
+    assert_eq!((one["decisive"].clone(), one["confident"].clone(), one["best"].clone()), (json!(false), json!(false), json!(0)));
+    // too far from everything: not confident whatever the margin
+    let bad = e.call("matchArtHash", &json!({"rows": [0, 2], "hashes": [format!("{:016x}", 0x00ff_ff00_00ff_ff00u64)], "maxDistance": 2})).unwrap();
+    assert_eq!(bad["confident"], false);
+    // image hashing: a missing file is an error, malformed hashes too
+    assert!(e.call("hashImage", &json!({"path": dir.join("nope.jpg")})).is_err());
+    assert!(e.call("matchArtHash", &json!({"rows": [0], "hashes": ["zz"]})).is_err());
+}

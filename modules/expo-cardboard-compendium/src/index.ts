@@ -44,6 +44,28 @@ export const getByScryfallId = getByKey;
  */
 export const attachOverlay = (id: string, path: string) => call<EngineInfo>('attachOverlay', { id, path });
 export const detachOverlay = (id: string) => call<EngineInfo>('detachOverlay', { id });
+/**
+ * Art hashes (docs/phash-design.md). Attach the `arthash` overlay (`attachOverlay('arthash', path)`), hash the photo once with
+ * `hashImage`, then rank the printings you already narrowed down by name with `matchArtHash`. Use it to break ties between
+ * printings, never to reject a candidate: `confident` is true only when the best art is within `maxDistance` bits (default 24)
+ * and beats the next-best DISTINCT art by `margin` bits (default 2); printings sharing one art tie, and `decisive` is false when
+ * the candidates share a single art (nothing to decide). Rows without a hash come back in `unhashed`.
+ */
+export type ArtMatch = {
+  ranked: { row: Row; distance: number }[];
+  unhashed: Row[];
+  best: number | null;
+  margin: number | null;
+  decisive: boolean;
+  confident: boolean;
+};
+/** Photo-side hashes (16 hex digits each) of an image file; `card: true` when it is a whole straightened card (the art box is cut out first). */
+export const hashImage = (path: string, o: { card?: boolean } = {}) => call<{ hashes: string[] }>('hashImage', { path, ...o });
+export const matchArtHash = (
+  rows: Row[],
+  query: { hashes: string[] } | { path: string; card?: boolean },
+  o: { maxDistance?: number; margin?: number } = {},
+) => call<ArtMatch>('matchArtHash', { rows, ...query, ...o });
 /** Rows of many Scryfall ids at once, in order; null for an unknown id. */
 export const rowsOf = (ids: string[]) => call<(Row | null)[]>('rowsOf', { ids });
 /** Cards of many Scryfall ids at once, in order; null for an unknown id. `prices` adds `card.prices` (MTGJSON, needs the prices overlay). */

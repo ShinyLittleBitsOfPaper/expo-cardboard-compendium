@@ -167,6 +167,57 @@ impl Engine {
         Ok(())
     }
 
+
+    /// Query hashes of an image file (the photo-side hashes of `coqc_phash::query_hashes`: 9 shifted inner-80% pHashes). With `card`
+    /// the file is a straightened whole-card image and the art box is cut out first.
+    pub fn hash_image(&self, path: &Path, card: bool) -> Result<Vec<u64>, String> {
+        let g = coqc_phash::load_gray(path)?;
+        Ok(coqc_phash::query_hashes(&if card { coqc_phash::card_art_region(&g) } else { g }))
+    }
+
+    /// Rank candidate printing rows by art distance to a photo, using the attached `arthash` overlay (docs/phash-design.md).
+    /// `q` are the photo's query hashes; a candidate's distance is the smallest Hamming distance to any of them. Rows without a hash
+    /// (no art, unknown row) come back in `unhashed`. `confident` is a tie-break guard: the best distance is at most `max_distance`
+    /// and the best art beats the next-best DISTINCT art by at least `margin` bits (a single distinct art is confident by distance
+    /// alone, but then there is nothing to decide, so `decisive` is false). Printings sharing one art hash tie by construction.
+    pub fn match_art(&self, rows: &[u32], q: &[u64], max_distance: u32, margin: u32) -> Result<Value, String> {
+        let (_, o) = self.overlays.iter().find(|(i, _)| i == "arthash").ok_or("arthash overlay not attached (attachOverlay id \"arthash\")")?;
+        let (def, t) = o.store.table("art").ok_or("arthash overlay has no art table")?;
+        let col = |name: &str| def.columns.iter().position(|c| c.name == name).ok_or_else(|| format!("arthash overlay lacks {name}"));
+        let (coqc_format::table::ColData::Int(hi), coqc_format::table::ColData::Int(lo)) = (&t.cols[col("phash_hi")?], &t.cols[col("phash_lo")?]) else {
+            return Err("bad arthash column".into());
+        };
+        let live = &self.store.tables[self.primary].tomb;
+        let (mut ranked, mut unhashed): (Vec<(u32, u32, u64)>, Vec<u32>) = (Vec::new(), Vec::new());
+        for &r in rows {
+            let h = (r as usize) < hi.len() && !live.get(r as usize).is_none_or(|t| *t);
+            match h.then(|| (hi[r as usize], lo[r as usize])) {
+                Some((Some(h), Some(l))) => {
+                    let hash = ((h as u64) << 32) | (l as u64 & 0xffff_ffff);
+                    ranked.push((q.iter().map(|&x| coqc_phash::hamming(x, hash)).min().unwrap_or(64), r, hash));
+                }
+                _ => unhashed.push(r),
+            }
+        }
+        ranked.sort();
+        let best = ranked.first().map(|x| x.0);
+        let next_art = ranked.iter().find(|x| Some(x.2) != ranked.first().map(|f| f.2)).map(|x| x.0);
+        let margin_bits = match (best, next_art) {
+            (Some(b), Some(n)) => Some(n - b),
+            _ => None,
+        };
+        let decisive = next_art.is_some();
+        let confident = best.is_some_and(|b| b <= max_distance) && margin_bits.is_none_or(|m| m >= margin);
+        Ok(json!({
+            "ranked": ranked.iter().map(|(d, r, _)| json!({"row": r, "distance": d})).collect::<Vec<_>>(),
+            "unhashed": unhashed,
+            "best": best,
+            "margin": margin_bits,
+            "decisive": decisive,
+            "confident": confident && decisive,
+        }))
+    }
+
     /// MTGJSON prices of printing rows from the attached `prices` overlay, Scryfall-shaped (`usd`, `usd_foil`, `usd_etched`, `eur`,
     /// `eur_foil`, `eur_etched`: strings with two decimals, null = no price). `usd*` is TCGplayer retail, `eur*` Cardmarket retail.
     /// Row i of the result belongs to `rows[i]`; an unknown or removed row gives null.
@@ -351,6 +402,19 @@ impl Engine {
                     self.add_prices(&rows, &mut out)?;
                 }
                 Ok(Value::Array(out))
+            }
+            "hashImage" => {
+                let h = self.hash_image(Path::new(s("path").ok_or("missing path")?), a.get("card").and_then(Value::as_bool) == Some(true))?;
+                Ok(json!({"hashes": h.iter().map(|x| format!("{x:016x}")).collect::<Vec<_>>()}))
+            }
+            "matchArtHash" => {
+                let rows: Vec<u32> = a.get("rows").and_then(Value::as_array).ok_or("missing rows")?.iter().filter_map(|v| v.as_u64().map(|r| r as u32)).collect();
+                let q: Vec<u64> = match a.get("hashes").and_then(Value::as_array) {
+                    Some(hs) => hs.iter().map(|h| h.as_str().and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or("bad hash (16 hex digits)")).collect::<Result<_, _>>()?,
+                    None => self.hash_image(Path::new(s("path").ok_or("give hashes or path")?), a.get("card").and_then(Value::as_bool) == Some(true))?,
+                };
+                let num = |k: &str, d: u32| a.get(k).and_then(Value::as_u64).map_or(d, |v| v as u32);
+                self.match_art(&rows, &q, num("maxDistance", 24), num("margin", 2))
             }
             "getPrices" => {
                 let rows = a.get("rows").and_then(Value::as_array).ok_or("missing rows")?;

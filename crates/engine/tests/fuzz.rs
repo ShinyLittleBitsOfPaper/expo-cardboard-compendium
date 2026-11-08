@@ -210,7 +210,7 @@ fn engine_and_c_abi_survive_damaged_files_and_garbage_calls() {
 
     // C ABI: unknown methods, wrong argument types and junk JSON come back as {"error":...}, never a panic
     let mut r = Rng(42);
-    for m in ["", "nope", "open", "search", "getRecords", "getByKeys", "registerRows", "attachOverlay", "patchFile", "unzstFile", "saveSets", "loadSets", "getPrices", "rowsOf", "applyPatch"] {
+    for m in ["", "nope", "open", "search", "getRecords", "getByKeys", "registerRows", "attachOverlay", "patchFile", "unzstFile", "saveSets", "loadSets", "getPrices", "rowsOf", "applyPatch", "hashImage", "matchArtHash"] {
         for a in ["", "{}", "[]", "null", "{\"query\":5}", "{\"rows\":\"x\"}", "{\"rows\":[-1,1e99,null,\"a\"]}", "{\"path\":\"/nonexistent/\\u0000\"}", "{\"ids\":[1,2]}", "{", "\u{0}"] {
             let out = call_json(m, a);
             let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("{m} {a}: not JSON: {out}"));
