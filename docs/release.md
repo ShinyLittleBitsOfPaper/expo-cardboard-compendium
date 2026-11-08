@@ -26,3 +26,10 @@ Module distribution is a tagged GitHub Release tarball (no npm publish needed). 
 - `peerDependencies` already lists `expo`, `expo-modules-core`, `react-native`.
 - LICENSE files (root and module) must stay identical.
 - No `exports` map; consumers import the package root (`src/index.ts`).
+
+## Art-hash overlay (0.0.3-16)
+- The data workflow publishes an `arthash` overlay next to `prices` (manifest dataset id `arthash`, files `arthash-<cards stamp>.coqd`, patches `arthash-<old>-to-<new>.coqp` when the previous overlay is usable). `scripts/data-art.sh` (called by `data-build.sh`) rebuilds it every run from the bulk file and a hash cache, with no image downloads.
+- The cache is `art-hashes.tsv.zst` in the persistent prerelease `art-hash-cache` (never pruned; `data-latest` assets not in the manifest are deleted by the publish step, which is why the cache does not live there). A run with no cache and no published `arthash` simply has no overlay; a run that cannot fetch the cache after `arthash` was published FAILS rather than dropping it from the manifest.
+- Maintenance (local, needs images): `pnpm art:status`, `pnpm art:update` (fetch missing art crops via `fetch-art.sh`, hash them, rewrite the cache), `pnpm art:release` (`art:release:dry` first; uploads the cache, creating `art-hash-cache` on first use). The next data run picks the new cache up; new sets leave their illustrations unhashed until someone runs update + release. `pnpm test:art` is the offline test (`scripts/test-art-pipeline.sh`).
+- First baseline: `pnpm art:release:dry`, `pnpm art:release`, then run the `data.yml` workflow with publish=false and check the staged manifest lists `arthash` before a real publish. A cache-only update does not by itself trigger a publish (the run exits early when neither cards nor prices changed); it goes out with the next day's data.
+- Before the first real publish: mention the art hashing (64-bit hashes derived from Scryfall art crops, no images redistributed) in the Scryfall permission request.

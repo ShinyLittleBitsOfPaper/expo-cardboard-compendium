@@ -6,7 +6,7 @@
 # 1. restore the current release from `data-latest` (row stability via --prev, patch base); none => first release
 # 2. scripts/daily.sh + scripts/daily-prices.sh (compile, patch, index, price delta; each verifies its own replay)
 # 3. `coqc verify` of the new cards file against the raw bulk file (0 mismatches required)
-# 4. compress the index (.coqi.zst) and write manifest.json (v2: datasets cards/cards-index/prices, see docs/manifest.md)
+# 4. compress the index (.coqi.zst) and write manifest.json (v2: datasets cards/cards-index/prices[/arthash], see docs/manifest.md)
 # Result: <stage>/ holds manifest.json, assets.txt, the full files and this run's patches; or <stage>/NOTHING when
 # neither Scryfall nor MTGJSON has new data (idempotent: the workflow then ends cleanly).
 # Env: GITHUB_REPOSITORY (OWNER/REPO, required), COQC_USER_AGENT, RETAIN_DAYS (30), REBASE=1 (force a new chain),
@@ -74,6 +74,8 @@ if [ -n "$PPRICE" ] && [ "$PS" != "$PPRICE" ]; then
   PSPEC+=",patch=$STAGE/prices-$PPRICE-to-$PS.coqp"
 fi
 ARGS=(--base "$CSPEC" --index "$ISPEC" --overlay "$PSPEC")
+scripts/data-art.sh "$STAGE" "$CARDS" "$CS" "$PREVM"
+[ -s "$STAGE/art.spec" ] && ARGS+=(--overlay "$(cat "$STAGE/art.spec")")
 [ -f "$PREVM" ] && ARGS+=(--prev "$PREVM")
 [ "${REBASE:-0}" = 1 ] && ARGS+=(--rebase)
 "$BIN" manifest --repo "$REPO" --run "data-$(date -u +%Y%m%d%H%M)" --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

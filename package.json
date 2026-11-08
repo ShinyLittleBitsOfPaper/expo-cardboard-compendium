@@ -1,0 +1,14 @@
+{
+  "name": "expo-cardboard-compendium-repo",
+  "private": true,
+  "description": "Repo-level maintenance commands (the publishable module is in modules/expo-cardboard-compendium).",
+  "scripts": {
+    "build": "cargo build --release",
+    "art:status": "scripts/art-hash.sh status",
+    "art:update": "scripts/art-hash.sh update",
+    "art:release": "scripts/art-hash.sh release",
+    "art:release:dry": "scripts/art-hash.sh release --dry-run",
+    "art:fetch-samples": "scripts/fetch-art-crops.sh ../card-art 300",
+    "test:art": "scripts/test-art-pipeline.sh"
+  }
+}
