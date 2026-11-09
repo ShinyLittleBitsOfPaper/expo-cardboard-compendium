@@ -125,6 +125,13 @@ function world(rel: Release) {
       async patchFile(path, patch, out) {
         const base = fs.get(path);
         const pb = fs.get(patch);
+        if (pb && base && pb.subarray(0, 6).equals(Buffer.from('PATCH:'))) {
+          // fake dataset patch: `PATCH:<n>` turns the file into dataset(n); the open engine is untouched (no engine lock)
+          const nd = dataset(Number(pb.subarray(6).toString()), 5000);
+          fs.set(out, nd);
+          log.push('patchFile cards');
+          return { sha256: sha(nd), size: nd.length };
+        }
         if (!base || !pb || !pb.subarray(0, 6).equals(Buffer.from('OPATCH'))) throw new Error('bad overlay patch');
         // fake overlay patch: `OPATCH:<n>` turns the file into `<id>-<n>`
         const id = out.split('/').pop()!.split('.')[0];
@@ -244,14 +251,14 @@ test('sync: first install downloads, verifies, unpacks the index and records sta
   assert.ok(![...w.fs.keys()].some((k) => k.endsWith('.zst.part')));
 });
 
-test('sync: next day applies the patch chain and the index deltas, then is idempotent', async () => {
+test('sync: next day applies the patch chain to the file (no engine lock, no index delta), then is idempotent', async () => {
   const w = world(release(1));
   await runSync(w.deps, { dir: DIR });
   w.setRelease(release(3, { chainFrom: [1, 2] }));
   w.log.length = 0;
   const r = await runSync(w.deps, { dir: DIR });
   assert.deepEqual([r.status, r.patches, r.overlays], ['patched', 2, 'updated']);
-  assert.deepEqual(w.log.filter((l) => !l.startsWith('GET')), ['DL cards-S1-to-S2.coqp', 'applyPatch', 'DL cards-S1-to-S2.coqid', 'applyIndexDelta', 'DL cards-S2-to-S3.coqp', 'applyPatch', 'DL cards-S2-to-S3.coqid', 'applyIndexDelta', 'DL prices-P3.coqd']);
+  assert.deepEqual(w.log.filter((l) => !l.startsWith('GET')), ['DL cards-S1-to-S2.coqp', 'patchFile cards', 'DL cards-S2-to-S3.coqp', 'patchFile cards', 'DL prices-P3.coqd']);
   assert.deepEqual(w.fs.get(P.coqd), dataset(3, 5000));
   assert.deepEqual(JSON.parse(w.text.get(P.state)!), state(3));
   assert.deepEqual(noTemp(w.fs), []);
@@ -353,7 +360,7 @@ test('sync: overlays are patched on disk without the engine, verified, then idem
   w.log.length = 0;
   const r = await runSync(w.deps, { dir: DIR });
   assert.equal(r.overlays, 'updated');
-  assert.deepEqual(w.log.filter((l) => l.startsWith('patchFile')), ['patchFile prices', 'patchFile prices']);
+  assert.deepEqual(w.log.filter((l) => l.startsWith('patchFile') && l !== 'patchFile cards'), ['patchFile prices', 'patchFile prices']);
   assert.ok(!w.log.includes('DL prices-P3.coqd'));
   assert.deepEqual(w.fs.get(P.overlay('prices')), Buffer.from('prices-3' + PAD));
   assert.deepEqual(JSON.parse(w.text.get(P.state)!).overlays, { prices: 'P3' });

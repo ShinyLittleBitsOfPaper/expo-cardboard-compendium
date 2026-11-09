@@ -77,6 +77,8 @@ export interface SyncResult {
   changed: boolean;
   /** Why a full download happened (status 'full'). */
   reason?: FullReason;
+  /** Why the patch chain failed when `reason` is 'fallback' (the full files were downloaded instead). */
+  fallbackError?: string;
   /** Formats this build cannot read yet (status 'needs_app_update'): ask the user to update the app. */
   required?: Partial<ModuleFormat> & { manifest?: number };
 }
@@ -186,43 +188,40 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
     await saveState({ epoch: manifest.epoch, cardsStamp: cards.stamp, cardsSha256: cards.file.sha256, overlays: keep });
   };
 
+  /**
+   * Apply the dataset patch chain to the FILE on disk with the stateless `patchFile` helper, not through the open engine.
+   * `engine.applyPatch` re-encodes (zstd) the whole dataset under the engine's global lock; on a phone that took 80 s
+   * (slbop 0.46.0 production log) and every card lookup waited behind it. `patchFile` does the same work but holds no
+   * engine lock, so reads keep being served from the already-open dataset. The index is not patched: the engine rebuilds
+   * (and rewrites) `cards.coqi` on the next open because it no longer matches the dataset.
+   */
   const patchCards = async (chain: CardStep[]) => {
-    let info: { datasetSha256: string } | null = null;
-    try {
-      info = await engine.info();
-    } catch {
-      // engine not open yet
-    }
-    if (!info || info.datasetSha256 !== local!.cardsSha256) info = await engine.open(paths.coqd, paths.coqi);
+    let from = paths.coqd;
     for (const [i, s] of chain.entries()) {
       progress(`patch ${s.patch.to}`, i + 1, chain.length);
       const p = await fetchVerified(s.patch.patch, 'step.coqp.part');
+      const out = tmp(`cards.coqd.${i % 2}.part`);
       try {
-        info = await engine.applyPatch(p);
+        await engine.patchFile(from, p, out);
       } finally {
         await engine.removeFile(p);
       }
-      if (s.indexDelta) {
-        // Best effort: if the delta does not apply, the engine rebuilds the index on the next search.
-        try {
-          const d = await fetchVerified(s.indexDelta.patch, 'step.coqid.part');
-          try {
-            info = await engine.applyIndexDelta(d);
-          } finally {
-            await engine.removeFile(d);
-          }
-        } catch {
-          // keep going
-        }
-      }
-      await saveState({ ...local!, cardsStamp: s.patch.to, cardsSha256: info.datasetSha256 });
+      if (from !== paths.coqd) await engine.removeFile(from);
+      from = out;
     }
-    if (info.datasetSha256 !== cards.file.sha256) throw new Error('patched dataset does not match the published file');
+    const got = await engine.sha256File(from);
+    if (got.sha256 !== cards.file.sha256 || got.size !== cards.file.size) {
+      await engine.removeFile(from);
+      throw new Error('patched dataset does not match the published file');
+    }
+    await engine.moveFile(from, paths.coqd);
+    await saveState({ ...local!, cardsStamp: chain[chain.length - 1].patch.to, cardsSha256: got.sha256 });
   };
 
   let status: SyncResult['status'] = 'up_to_date';
   let patches = 0;
   let reason: FullReason | undefined;
+  let fallbackError: string | undefined;
   if (plan.cards.kind === 'full') {
     await fullCards();
     status = 'full';
@@ -232,8 +231,9 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
       await patchCards(plan.cards.steps);
       status = 'patched';
       patches = plan.cards.steps.length;
-    } catch {
+    } catch (e) {
       // A failed patch step (corrupt, wrong base) must not strand the user: fetch the full files instead.
+      fallbackError = e instanceof Error ? e.message : String(e);
       await fullCards();
       status = 'full';
       reason = 'fallback';
@@ -285,7 +285,7 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
   }
 
   const changed = status !== 'up_to_date' || updated === 'updated';
-  return { status, patches, overlays: updated, changed, ...(reason ? { reason } : {}) };
+  return { status, patches, overlays: updated, changed, ...(reason ? { reason } : {}), ...(fallbackError ? { fallbackError } : {}) };
 }
 
 /**
