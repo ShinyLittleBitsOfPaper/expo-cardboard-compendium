@@ -1,4 +1,6 @@
 import { call } from './native';
+export { setSlowCallObserver } from './native';
+export type { SlowCall } from './native';
 
 export type Row = number; // printing row: stable and append-only across patches
 export type Card = Record<string, any>; // Scryfall card JSON

@@ -45,3 +45,6 @@ the `test` job runs `scripts/check-version.sh` on tags and fails on a mismatch.
   depend only on libc/libdl, 64-bit slices are 16 KB aligned. `ios` could not get a macOS runner. Node 20 deprecation notices
   (actions/checkout@v4, upload-artifact@v4) are warnings only.
 - Compiled libraries are gitignored; local development uses `scripts/build-native.sh`.
+
+## Lock and slow-call diagnostics (0.0.3-17)
+All engine calls share one global lock (a `Mutex` around the engine in `ffi.rs`), so a slow call (open, search, an overlay attach, a big batch) delays every other call. Stateless file helpers (`sha256File`, `unzstFile`, `patchFile`, ...) do not take it. A call that waited >= 100 ms for the lock or ran >= 250 ms carries `t: {method, wait, run, holder}` in its reply; the TS layer hands it to the observer registered with `setSlowCallObserver`. `holder` is the method that held the lock when the call queued, a best guess at what it waited for. Apps should log these (slbop writes `[CardEngine] slow native call ...` lines).
