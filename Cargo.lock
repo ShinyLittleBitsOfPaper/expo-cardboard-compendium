@@ -70,7 +70,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "coqc"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "coqc-format",
  "coqc-generic",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "coqc-engine"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "coqc",
  "coqc-format",
@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "coqc-format"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "regex",
  "serde",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "coqc-generic"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "coqc-format",
  "serde_json",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "coqc-mtg"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "coqc-format",
  "serde",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "coqc-phash"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "image",
 ]
