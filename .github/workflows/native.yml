@@ -45,27 +45,9 @@ jobs:
           name: jniLibs
           path: modules/expo-cardboard-compendium/android/src/main/jniLibs
 
-  ios:
-    # Optional for now: macOS arm64 runners are capacity-constrained and the job can fail to be acquired.
-    # The package job still runs (without the xcframework) when this fails or is skipped.
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: test
-    continue-on-error: true
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: scripts/build-native.sh ios
-      - uses: actions/upload-artifact@v4
-        with:
-          name: xcframework
-          path: modules/expo-cardboard-compendium/ios/libcoqe.xcframework
-
   package:
-    needs: [android, ios]
-    # run when android succeeded, even if ios failed or was cancelled by capacity problems
-    if: ${{ !cancelled() && needs.android.result == 'success' }}
+    # iOS is out of the pipeline for now (builds were failing): the package is Android-only. Re-add an ios job (scripts/build-native.sh ios) when it works.
+    needs: android
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -75,11 +57,6 @@ jobs:
         with:
           name: jniLibs
           path: modules/expo-cardboard-compendium/android/src/main/jniLibs
-      - uses: actions/download-artifact@v4
-        continue-on-error: true # no xcframework when the ios job did not produce one
-        with:
-          name: xcframework
-          path: modules/expo-cardboard-compendium/ios/libcoqe.xcframework
       - uses: actions/setup-node@v4
         with:
           node-version: 22

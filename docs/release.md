@@ -12,7 +12,7 @@ Module distribution is a tagged GitHub Release tarball (no npm publish needed). 
 ## Code release procedure (module tarball)
 1. `scripts/set-version.sh X.Y.Z`; commit; push to `trunk`.
 2. Tag `vX.Y.Z` and push the tag. `native.yml` checks tag vs versions (`scripts/check-version.sh`), runs tests, builds Android
-   (3 ABIs) and iOS (`continue-on-error`), `npm pack`s the module and attaches the `.tgz` to the GitHub Release.
+   (3 ABIs; iOS is out of the pipeline since 0.0.6, the package is Android-only), `npm pack`s the module and attaches the `.tgz` to the GitHub Release.
 3. slbop pins the release asset URL in `package.json`; the data pipeline is independent (`data.yml`, `data-latest` release).
 
 ## Data release procedure
