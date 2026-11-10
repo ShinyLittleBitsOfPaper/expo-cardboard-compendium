@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name           = 'ExpoCardboardCompendium'
-  s.version        = '0.0.6'
+  s.version        = '0.0.7'
   s.summary        = 'Scryfall-syntax card search over COQD/COQI (Rust)'
   s.homepage       = 'https://example.invalid/expo-cardboard-compendium'
   s.license        = { :type => 'MIT' }
