@@ -83,8 +83,13 @@ impl Engine {
     /// The dialect is picked from the dataset's schema id: `mtg` is the Magic dialect, any other schema is served by the
     /// schema-driven generic dialect ([`dialect_for`]).
     pub fn open(coqd: &Path, coqi_path: Option<&Path>) -> Result<Engine, String> {
-        let bytes = std::fs::read(coqd).map_err(|e| format!("{}: {e}", coqd.display()))?;
-        let id = coqd::parse(&bytes).and_then(|p| p.schema()).map_err(|e| format!("{}: {e}", coqd.display()))?.id;
+        // The whole file is read only to learn the schema id; free it BEFORE `open_with` reads it again (it used to stay alive
+        // for the whole open, i.e. two copies of the compressed dataset on top of the decoded store).
+        let id = {
+            let bytes = std::fs::read(coqd).map_err(|e| format!("{}: {e}", coqd.display()))?;
+            let id = coqd::parse(&bytes).and_then(|p| p.schema()).map_err(|e| format!("{}: {e}", coqd.display()))?.id;
+            id
+        };
         Self::open_with(coqd, coqi_path, dialect_for(&id))
     }
 

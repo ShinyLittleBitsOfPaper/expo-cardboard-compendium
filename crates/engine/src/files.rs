@@ -72,6 +72,8 @@ pub fn patch_file(path: &Path, patch: &Path, out: &Path) -> Result<(String, u64)
     let old = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let p = std::fs::read(patch).map_err(|e| format!("{}: {e}", patch.display()))?;
     let new = coqc_format::patch::apply_patch(&old, &p)?;
+    drop(old); // peak memory: the patch step holds old + new + its own working copies at once
+    drop(p);
     let mut part = out.as_os_str().to_owned();
     part.push(".part");
     let part = std::path::PathBuf::from(part);

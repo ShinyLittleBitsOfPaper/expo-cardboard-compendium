@@ -46,6 +46,10 @@ fn dispatch(method: &str, args: &str) -> (Result<Value, String>, Option<Timing>)
         "open" => {
             let coqd = a.get("coqd").and_then(Value::as_str).ok_or("missing coqd")?;
             let coqi = a.get("coqi").and_then(Value::as_str).map(Path::new);
+            // Free the engine being replaced BEFORE building the new one: both used to be resident at once (old store + new file
+            // + new store + index build), a memory peak right after every card-data sync. The lock is held for the whole open,
+            // so no call can see the closed engine; if the new open fails the engine stays closed and the caller must re-open.
+            *g = None;
             let e = Engine::open(Path::new(coqd), coqi)?;
             let info = e.info();
             *g = Some(e);
