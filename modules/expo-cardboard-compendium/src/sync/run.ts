@@ -297,6 +297,26 @@ export async function openLocal(deps: SyncDeps, dir: string): Promise<{ attached
   const state = parseState(await deps.readText(paths.state));
   if (!state) throw new Error('no synced data: run sync first');
   await deps.engine.open(paths.coqd, paths.coqi);
+  return attachOverlays(deps, paths, state);
+}
+
+/**
+ * Re-attach every overlay recorded in state.json to the ALREADY OPEN engine, without re-opening the dataset. For a sync
+ * that only replaced overlay files (`status: 'up_to_date'`, `overlays: 'updated'`): re-opening the whole dataset for that
+ * costs seconds and a memory peak. Throws when the engine is not open or nothing was synced; callers fall back to `openLocal`.
+ */
+export async function attachLocalOverlays(deps: SyncDeps, dir: string): Promise<{ attached: string[]; failed: string[] }> {
+  const paths = dataPaths(dir);
+  const state = parseState(await deps.readText(paths.state));
+  if (!state) throw new Error('no synced data: run sync first');
+  return attachOverlays(deps, paths, state);
+}
+
+async function attachOverlays(
+  deps: SyncDeps,
+  paths: ReturnType<typeof dataPaths>,
+  state: NonNullable<ReturnType<typeof parseState>>,
+): Promise<{ attached: string[]; failed: string[] }> {
   const attached: string[] = [];
   const failed: string[] = [];
   for (const id of Object.keys(state.overlays)) {

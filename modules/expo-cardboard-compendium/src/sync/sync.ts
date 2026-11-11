@@ -1,5 +1,5 @@
 import { nativeDeps } from './nativeDeps';
-import { openLocal, runSync, type SyncOptions, type SyncResult } from './run';
+import { attachLocalOverlays, openLocal, runSync, type SyncOptions, type SyncResult } from './run';
 
 let running: Promise<SyncResult> | null = null;
 
@@ -18,3 +18,6 @@ export function sync(o: SyncOptions): Promise<SyncResult> {
 
 /** Open the engine on the synced files in `dir` and attach every overlay (prices, ...); see `openLocal`. */
 export const openSynced = (dir: string) => openLocal(nativeDeps, dir);
+
+/** Re-attach the synced overlays to the already open engine (no dataset re-open); throws when the engine is not open. See `attachLocalOverlays`. */
+export const attachSyncedOverlays = (dir: string) => attachLocalOverlays(nativeDeps, dir);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { parseManifest, resolve, type Dataset, type Manifest } from '../manifest';
 import { planSync, planBytes, MODULE_FORMAT, type CardsPlan, type LocalState } from '../plan';
-import { runSync, dataPaths, openLocal, type SyncDeps, type SyncProgress } from '../run';
+import { runSync, dataPaths, openLocal, attachLocalOverlays, type SyncDeps, type SyncProgress } from '../run';
 
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const DIR = '/data/cc';
@@ -443,4 +443,13 @@ test('sync: progress total grows (never shrinks) when a patch falls back to the 
     assert.ok(dl[i].bytesTotal! >= dl[i - 1].bytesTotal!);
   }
   assert.ok(dl.every((e) => e.bytesDone! <= e.bytesTotal!));
+});
+
+test('attachLocalOverlays: attaches the tracked overlays without opening the dataset', async () => {
+  const w = world(release(1, { extraOverlay: true }));
+  await runSync(w.deps, { dir: DIR });
+  w.log.length = 0;
+  const r = await attachLocalOverlays(w.deps, DIR);
+  assert.deepEqual([r.attached.sort(), r.failed], [['prices', 'rulings'], []]);
+  await assert.rejects(attachLocalOverlays(world(release(1)).deps, '/nowhere'), /run sync first/);
 });
