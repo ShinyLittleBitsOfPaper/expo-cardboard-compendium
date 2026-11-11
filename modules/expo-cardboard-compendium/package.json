@@ -1,6 +1,6 @@
 {
   "name": "expo-cardboard-compendium",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Scryfall-syntax card search over compiled COQD/COQI data (Rust)",
   "license": "MIT",
   "repository": {
