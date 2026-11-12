@@ -4,6 +4,7 @@
   "description": "Repo-level maintenance commands (the publishable module is in modules/expo-cardboard-compendium).",
   "scripts": {
     "build": "cargo build --release",
+    "release": "scripts/cut-release.sh",
     "art:status": "scripts/art-hash.sh status",
     "art:update": "scripts/art-hash.sh update",
     "art:release": "scripts/art-hash.sh release",

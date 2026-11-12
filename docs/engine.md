@@ -31,7 +31,7 @@ Notes
   None of it has been built or run: there is no Android/Xcode toolchain here. Expect first-build fixes (Gradle plugin names, CMake paths).
 
 ## Release pipeline (`.github/workflows/native.yml`)
-Versioning: one version everywhere, equal to the tag. `scripts/set-version.sh X.Y.Z` (then commit, push, tag `vX.Y.Z`, push the tag);
+Versioning: one version everywhere, equal to the tag. `scripts/cut-release.sh major|minor|patch` does it all (bump, commit, tag, push); or by hand `scripts/set-version.sh X.Y.Z` (then commit, push, tag `vX.Y.Z`, push the tag);
 the `test` job runs `scripts/check-version.sh` on tags and fails on a mismatch.
 - Every push/PR: `cargo test --workspace`.
 - Tag `vX.Y.Z` (or manual dispatch): build `libcoqe.so` for 3 Android ABIs (cargo-ndk installed with taiki-e/install-action, runner NDK) and
