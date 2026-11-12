@@ -9,7 +9,7 @@
 //! every column as `rows` zigzag varints of (new cell code - old cell code), rows past the old table counting as absent (code 0).
 
 use crate::codec::{Reader, Writer};
-use crate::coqd::{decode_meta, decode_row, encode_meta, read_store, row_bytes, write_store};
+use crate::coqd::{decode_meta, decode_row, encode_meta, read_store, row_bytes, write_store_reusing};
 use crate::table::{ColData, Table};
 use sha2::{Digest, Sha256};
 
@@ -214,7 +214,7 @@ pub fn apply_patch(old_bytes: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
     st.source_date = meta.source_date;
     st.dicts = meta.dicts;
     st.props = meta.props;
-    let (out, _) = write_store(&st).map_err(e)?;
+    let (out, _) = write_store_reusing(&st, Some(old_bytes)).map_err(e)?;
     if sha(&out) != new_sha {
         return Err("result does not match the expected hash; download the full file".into());
     }

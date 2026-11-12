@@ -17,6 +17,8 @@ export interface EngineOps {
   unzstFile(path: string, out: string): Promise<{ sha256: string; size: number }>;
   /** Apply a .coqp to the file at `path`, writing `out`; needs no open engine (used for overlays). */
   patchFile(path: string, patch: string, out: string): Promise<{ sha256: string; size: number }>;
+  /** Apply a .coqid to the .coqi at `path`, writing `out`; needs no open engine. Optional: without it the index is rebuilt on open. */
+  patchIndexFile?(path: string, delta: string, out: string): Promise<{ sha256: string; size: number }>;
   attachOverlay(id: string, path: string): Promise<unknown>;
   moveFile(from: string, to: string): Promise<void>;
   removeFile(path: string): Promise<void>;
@@ -192,9 +194,38 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
    * Apply the dataset patch chain to the FILE on disk with the stateless `patchFile` helper, not through the open engine.
    * `engine.applyPatch` re-encodes (zstd) the whole dataset under the engine's global lock; on a phone that took 80 s
    * (slbop 0.46.0 production log) and every card lookup waited behind it. `patchFile` does the same work but holds no
-   * engine lock, so reads keep being served from the already-open dataset. The index is not patched: the engine rebuilds
-   * (and rewrites) `cards.coqi` on the next open because it no longer matches the dataset.
+   * engine lock, so reads keep being served from the already-open dataset. The index is patched next (`patchIndex`); if that is
+   * not possible the engine rebuilds (and rewrites) `cards.coqi` on the next open because it no longer matches the dataset.
    */
+  /**
+   * Best effort (0.0.8-3): bring `cards.coqi` to the new dataset with the published index deltas (each ~200 B to ~180 KB) instead of
+   * letting the engine rebuild it on the next open (10 s on a phone). Any miss (a step without a delta, a delta that does not apply,
+   * a result that is not the published index) leaves the old file in place, which the engine sees as stale and rebuilds: never an error.
+   */
+  const patchIndex = async (chain: CardStep[]) => {
+    if (!engine.patchIndexFile || chain.some((s) => !s.indexDelta)) return;
+    let from = paths.coqi;
+    try {
+      for (const [i, s] of chain.entries()) {
+        progress(`index ${s.patch.to}`, i + 1, chain.length);
+        const d = await fetchVerified(s.indexDelta!.patch, 'step.coqid.part');
+        const out = tmp(`cards.coqi.${i % 2}.part`);
+        try {
+          await engine.patchIndexFile(from, d, out);
+        } finally {
+          await engine.removeFile(d);
+        }
+        if (from !== paths.coqi) await engine.removeFile(from);
+        from = out;
+      }
+      const got = await engine.sha256File(from);
+      if (got.sha256 !== index.raw!.sha256 || got.size !== index.raw!.size) throw new Error('patched index does not match the published one');
+      await engine.moveFile(from, paths.coqi);
+    } catch {
+      if (from !== paths.coqi) await engine.removeFile(from);
+    }
+  };
+
   const patchCards = async (chain: CardStep[]) => {
     let from = paths.coqd;
     for (const [i, s] of chain.entries()) {
@@ -216,6 +247,7 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
     }
     await engine.moveFile(from, paths.coqd);
     await saveState({ ...local!, cardsStamp: chain[chain.length - 1].patch.to, cardsSha256: got.sha256 });
+    await patchIndex(chain);
   };
 
   let status: SyncResult['status'] = 'up_to_date';

@@ -82,7 +82,24 @@ pub fn patch_file(path: &Path, patch: &Path, out: &Path) -> Result<(String, u64)
     Ok((hex(&Sha256::digest(&new)), new.len() as u64))
 }
 
-/// `sha256File {path}`, `unzstFile {path, out}`, `patchFile {path, patch, out}`, `moveFile {from, to}` (atomic replace), `removeFile {path}` (missing is fine); `None` when `method` is not a file helper.
+/// Apply a `.coqid` index delta to the `.coqi` at `path`, writing the result to `out` (via `<out>.part`, then renamed). Needs no open
+/// engine (0.0.8-3): the sync uses it so the next open finds an index that matches the patched dataset instead of rebuilding it
+/// (10 s on a phone). Fails unless the delta's base hash is `path`'s hash and its result hash verifies. Returns (sha256 hex, size).
+pub fn patch_index_file(path: &Path, delta: &Path, out: &Path) -> Result<(String, u64), String> {
+    let old = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let d = std::fs::read(delta).map_err(|e| format!("{}: {e}", delta.display()))?;
+    let new = coqc_format::coqi::apply_delta(&old, &d).map_err(|e| format!("index delta: {e:?}"))?;
+    drop(old);
+    drop(d);
+    let mut part = out.as_os_str().to_owned();
+    part.push(".part");
+    let part = std::path::PathBuf::from(part);
+    std::fs::write(&part, &new).map_err(|e| format!("{}: {e}", part.display()))?;
+    std::fs::rename(&part, out).map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok((hex(&Sha256::digest(&new)), new.len() as u64))
+}
+
+/// `sha256File {path}`, `unzstFile {path, out}`, `patchFile {path, patch, out}`, `patchIndexFile {path, delta, out}`, `moveFile {from, to}` (atomic replace), `removeFile {path}` (missing is fine); `None` when `method` is not a file helper.
 pub fn call(method: &str, a: &Value) -> Option<Result<Value, String>> {
     let s = |k: &str| a.get(k).and_then(Value::as_str).ok_or(format!("missing {k}"));
     match method {
@@ -93,6 +110,11 @@ pub fn call(method: &str, a: &Value) -> Option<Result<Value, String>> {
         "patchFile" => Some(
             s("path")
                 .and_then(|p| s("patch").and_then(|q| s("out").and_then(|o| patch_file(Path::new(p), Path::new(q), Path::new(o)))))
+                .map(|(h, n)| json!({"sha256": h, "size": n})),
+        ),
+        "patchIndexFile" => Some(
+            s("path")
+                .and_then(|p| s("delta").and_then(|q| s("out").and_then(|o| patch_index_file(Path::new(p), Path::new(q), Path::new(o)))))
                 .map(|(h, n)| json!({"sha256": h, "size": n})),
         ),
         "moveFile" => Some(s("from").and_then(|f| s("to").and_then(|t| move_file(Path::new(f), Path::new(t)))).map(|_| Value::Null)),

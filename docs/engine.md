@@ -19,7 +19,7 @@ updates. The only native entry point is the C ABI in `ffi.rs`: `coqe_call(method
 | `detachOverlay` | `id` | removes it again |
 | `registerSet` | `name`, `ids[]` | `{resolved, unknown}`; later `search {scope: name}` can only match those printings |
 | `applyPatch` | `path` (.coqp) | replaces the .coqd atomically; index marked `stale` |
-| `sha256File` / `unzstFile` / `patchFile` / `moveFile` / `removeFile` | `path` (`out`, `patch`, `from`/`to`) | stateless (no open engine): streamed SHA-256, zstd decompress to a file, atomic replace, delete (missing is fine); used by `sync()`; `patchFile {path, patch, out}` applies a `.coqp` to a file without an open engine (overlay updates) |
+| `sha256File` / `unzstFile` / `patchFile` / `patchIndexFile` / `moveFile` / `removeFile` | `path` (`out`, `patch`, `from`/`to`) | stateless (no open engine): streamed SHA-256, zstd decompress to a file, atomic replace, delete (missing is fine); used by `sync()`; `patchFile {path, patch, out}` applies a `.coqp` to a file without an open engine (overlay updates); `patchIndexFile {path, delta, out}` applies a `.coqid` to a `.coqi` the same way, so the index matches the patched dataset without a rebuild on open |
 | `applyIndexDelta` | `path` (.coqid) | refused unless it targets the current dataset hash; on failure the next search rebuilds |
 | `info` / `close` | | |
 

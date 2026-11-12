@@ -453,3 +453,38 @@ test('attachLocalOverlays: attaches the tracked overlays without opening the dat
   assert.deepEqual([r.attached.sort(), r.failed], [['prices', 'rulings'], []]);
   await assert.rejects(attachLocalOverlays(world(release(1)).deps, '/nowhere'), /run sync first/);
 });
+
+test('sync: patch chain also patches the index with the published deltas (no rebuild on open)', async () => {
+  const w = world(release(1));
+  await runSync(w.deps, { dir: DIR });
+  w.setRelease(release(3, { chainFrom: [1, 2] }));
+  w.log.length = 0;
+  w.deps.engine.patchIndexFile = async (path, delta, out) => {
+    const d = w.fs.get(delta)!;
+    if (!w.fs.has(path) || !d.subarray(0, 5).equals(Buffer.from('IDXD:'))) throw new Error('bad index delta');
+    const nb = Buffer.concat([Buffer.from('IDX:'), dataset(Number(d.subarray(5).toString()), 5000)]);
+    w.fs.set(out, nb);
+    w.log.push('patchIndexFile');
+    return { sha256: sha(nb), size: nb.length };
+  };
+  const r = await runSync(w.deps, { dir: DIR });
+  assert.deepEqual([r.status, r.patches], ['patched', 2]);
+  assert.ok(w.log.includes('patchIndexFile'));
+  assert.deepEqual(w.fs.get(P.coqi), Buffer.concat([Buffer.from('IDX:'), dataset(3, 5000)]));
+  assert.deepEqual(noTemp(w.fs), []);
+});
+
+test('sync: a failing index delta leaves the old index (engine rebuilds) and does not fail the sync', async () => {
+  const w = world(release(1));
+  await runSync(w.deps, { dir: DIR });
+  const before = w.fs.get(P.coqi)!;
+  w.setRelease(release(3, { chainFrom: [1, 2] }));
+  w.deps.engine.patchIndexFile = async () => {
+    throw new Error('delta base hash mismatch');
+  };
+  const r = await runSync(w.deps, { dir: DIR });
+  assert.deepEqual([r.status, r.patches, r.fallbackError], ['patched', 2, undefined]);
+  assert.deepEqual(w.fs.get(P.coqd), dataset(3, 5000));
+  assert.deepEqual(w.fs.get(P.coqi), before);
+  assert.deepEqual(noTemp(w.fs), []);
+});

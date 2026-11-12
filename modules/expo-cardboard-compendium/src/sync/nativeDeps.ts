@@ -68,6 +68,7 @@ export const nativeDeps: SyncDeps = {
     sha256File: (path) => call('sha256File', { path }),
     unzstFile: (path, out) => call('unzstFile', { path, out }),
     patchFile: (path, patch, out) => call('patchFile', { path, patch, out }),
+    patchIndexFile: (path, delta, out) => call('patchIndexFile', { path, delta, out }),
     attachOverlay: (id, path) => call('attachOverlay', { id, path }),
     moveFile: (from, to) => call('moveFile', { from, to }),
     removeFile: (path) => call('removeFile', { path }),

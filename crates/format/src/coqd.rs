@@ -259,29 +259,113 @@ pub fn decode_meta(schema: &Schema, r: &mut Reader) -> Result<MetaBlock> {
 
 // ----------------------------------------------------------------- write ---
 
-fn encode_blocks(def: &TableDef, t: &Table) -> Result<(Vec<u8>, u64, u32)> {
+/// The block table + data of one table's rows section in an OLD file, so an unchanged block can be copied instead of recompressed.
+struct OldRows<'a> {
+    nblocks: usize,
+    table: &'a [u8],
+    data: &'a [u8],
+}
+
+impl<'a> OldRows<'a> {
+    fn new(sec: &'a [u8]) -> Option<Self> {
+        let rows = u32::from_le_bytes(sec.get(0..4)?.try_into().ok()?) as usize;
+        let nblocks = u32::from_le_bytes(sec.get(4..8)?.try_into().ok()?) as usize;
+        if rows != BLOCK_ROWS {
+            return None;
+        }
+        let end = 8usize.checked_add(nblocks.checked_mul(24)?)?;
+        Some(OldRows { nblocks, table: sec.get(8..end)?, data: sec.get(end..)? })
+    }
+
+    /// (compressed bytes, raw length, hash) of old block `b`.
+    fn block(&self, b: usize) -> Option<(&'a [u8], usize, [u8; 8])> {
+        if b >= self.nblocks {
+            return None;
+        }
+        let e = self.table.get(b * 24..b * 24 + 24)?;
+        let off = u64::from_le_bytes(e[0..8].try_into().ok()?) as usize;
+        let clen = u32::from_le_bytes(e[8..12].try_into().ok()?) as usize;
+        let rlen = u32::from_le_bytes(e[12..16].try_into().ok()?) as usize;
+        let hash: [u8; 8] = e[16..24].try_into().ok()?;
+        Some((self.data.get(off..off.checked_add(clen)?)?, rlen, hash))
+    }
+}
+
+/// One block: rows `start..end` as length-prefixed row bytes, zstd-compressed. Independent of every other block, so blocks can be
+/// built on any thread in any order and the output bytes are the same (0.0.8-2). With `old`, a block whose raw bytes equal the old
+/// file's block `b` reuses the old compressed bytes (0.0.8-3): compression is deterministic, so the result is identical, and the
+/// check is on the decompressed CONTENT, so a stale or mismatched old file can only cost time, never produce different bytes.
+fn encode_one_block(def: &TableDef, t: &Table, b: usize, start: usize, end: usize, old: Option<&OldRows>) -> Result<(Vec<u8>, usize, [u8; 8])> {
+    let mut raw = Writer::new();
+    for i in start..end {
+        let one = row_bytes(def, t, i);
+        raw.uvarint(one.len() as u64);
+        raw.bytes(&one);
+    }
+    if let Some((comp, rlen, hash)) = old.and_then(|o| o.block(b)) {
+        if rlen == raw.buf.len() {
+            if let Ok(prev) = zstd_exact(comp, rlen) {
+                if prev == raw.buf {
+                    return Ok((comp.to_vec(), rlen, hash));
+                }
+            }
+        }
+    }
+    let comp = zstd_compress(&raw.buf)?;
+    let hash: [u8; 8] = Sha256::digest(&comp)[..8].try_into().unwrap();
+    Ok((comp, raw.buf.len(), hash))
+}
+
+/// Compress all blocks of a table, spread over up to 8 threads (0.0.8-2: a dataset patch re-encodes the whole dataset at zstd 15 to
+/// reproduce the published bytes, 91 s single-threaded on a phone). Block boundaries and per-block compression are unchanged and the
+/// results are joined in block order, so the output is byte-identical to the sequential version.
+fn encode_blocks(def: &TableDef, t: &Table, old: Option<&OldRows>) -> Result<(Vec<u8>, u64, u32)> {
+    let rows = t.rows();
+    let nblocks_total = rows.div_ceil(BLOCK_ROWS);
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8).min(nblocks_total.max(1));
+    let mut blocks: Vec<Result<(Vec<u8>, usize, [u8; 8])>> = Vec::with_capacity(nblocks_total);
+    if threads <= 1 {
+        for b in 0..nblocks_total {
+            blocks.push(encode_one_block(def, t, b, b * BLOCK_ROWS, ((b + 1) * BLOCK_ROWS).min(rows), old));
+        }
+    } else {
+        // Interleaved assignment (thread k takes blocks k, k+threads, ...) keeps the load even when later blocks are bigger.
+        let mut parts: Vec<Vec<Result<(Vec<u8>, usize, [u8; 8])>>> = Vec::new();
+        std::thread::scope(|sc| {
+            let handles: Vec<_> = (0..threads)
+                .map(|k| {
+                    sc.spawn(move || {
+                        (k..nblocks_total)
+                            .step_by(threads)
+                            .map(|b| encode_one_block(def, t, b, b * BLOCK_ROWS, ((b + 1) * BLOCK_ROWS).min(rows), old))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for h in handles {
+                parts.push(h.join().unwrap_or_else(|_| vec![Err(Error::Corrupt("block encoder panicked"))]));
+            }
+        });
+        let mut iters: Vec<_> = parts.into_iter().map(|p| p.into_iter()).collect();
+        for b in 0..nblocks_total {
+            match iters[b % threads].next() {
+                Some(r) => blocks.push(r),
+                None => return Err(Error::Corrupt("block encoder panicked")),
+            }
+        }
+    }
     let mut table = Writer::new();
     let mut data = Writer::new();
     let (mut raw_total, mut nblocks) = (0u64, 0u32);
-    let mut start = 0;
-    while start < t.rows() {
-        let end = (start + BLOCK_ROWS).min(t.rows());
-        let mut raw = Writer::new();
-        for i in start..end {
-            let one = row_bytes(def, t, i);
-            raw.uvarint(one.len() as u64);
-            raw.bytes(&one);
-        }
-        let comp = zstd_compress(&raw.buf)?;
-        let hash: [u8; 8] = Sha256::digest(&comp)[..8].try_into().unwrap();
+    for r in blocks {
+        let (comp, rawlen, hash) = r?;
         table.u64(data.buf.len() as u64);
         table.u32(comp.len() as u32);
-        table.u32(raw.buf.len() as u32);
+        table.u32(rawlen as u32);
         table.bytes(&hash);
         data.bytes(&comp);
-        raw_total += raw.buf.len() as u64;
+        raw_total += rawlen as u64;
         nblocks += 1;
-        start = end;
     }
     let mut out = Writer::new();
     out.u32(BLOCK_ROWS as u32);
@@ -345,6 +429,13 @@ fn decode_columnar(def: &TableDef, sec: &[u8], count: usize) -> Result<Table> {
 }
 
 pub fn write_store(st: &Store) -> Result<(Vec<u8>, Vec<SectionStat>)> {
+    write_store_reusing(st, None)
+}
+
+/// `write_store`, copying the compressed bytes of every row block that is unchanged against `old` (an earlier file of the same
+/// dataset). Output is byte-identical to `write_store(st)`; only the time differs (0.0.8-3).
+pub fn write_store_reusing(st: &Store, old: Option<&[u8]>) -> Result<(Vec<u8>, Vec<SectionStat>)> {
+    let old_parsed = old.and_then(|b| parse(b).ok());
     st.check().map_err(|_| Error::Corrupt("inconsistent store"))?;
     let mut schema = Writer::new();
     st.schema.encode(&mut schema);
@@ -359,7 +450,8 @@ pub fn write_store(st: &Store) -> Result<(Vec<u8>, Vec<SectionStat>)> {
             let n = b.len() as u64;
             (b, n, 1)
         } else {
-            encode_blocks(def, t)?
+            let o = old_parsed.as_ref().and_then(|p| p.rows(i as u32).ok()).and_then(OldRows::new);
+            encode_blocks(def, t, o.as_ref())?
         };
         stats.push(SectionStat { name: def.name.clone(), raw_bytes: raw, stored_bytes: bytes.len() as u64, blocks });
         sections.push((K_ROWS, i as u32, bytes));
