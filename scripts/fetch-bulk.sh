@@ -15,7 +15,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-UA="${COQC_USER_AGENT:-expo-cardboard-compendium/0.0.8 (set COQC_USER_AGENT to include a contact)}"
+UA="${COQC_USER_AGENT:-expo-cardboard-compendium/0.0.9 (set COQC_USER_AGENT to include a contact)}"
 META_URL="${COQC_BULK_META_URL:-https://api.scryfall.com/bulk-data/$TYPE}"
 mkdir -p "$DEST"
 
