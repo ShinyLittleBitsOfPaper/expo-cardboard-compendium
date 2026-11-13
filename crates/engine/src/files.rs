@@ -69,6 +69,14 @@ pub fn move_file(from: &Path, to: &Path) -> Result<(), String> {
 /// Apply a `.coqp` to the dataset at `path`, writing the result to `out` (via `<out>.part`, then renamed). Needs no open engine,
 /// so overlays (prices) can be patched without loading the card data. Returns (sha256 hex, size) of the output.
 pub fn patch_file(path: &Path, patch: &Path, out: &Path) -> Result<(String, u64), String> {
+    patch_file_stats(path, patch, out).map(|(h, n, _)| (h, n))
+}
+
+/// `patch_file` plus diagnostics for the JS side (0.0.9-1): `{ms, reused, encoded}` = wall time and how many row blocks were copied
+/// from the old file vs recompressed (a daily patch should reuse most of them).
+pub fn patch_file_stats(path: &Path, patch: &Path, out: &Path) -> Result<(String, u64, Value), String> {
+    let t0 = std::time::Instant::now();
+    coqc_format::coqd::block_counts_reset();
     let old = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let p = std::fs::read(patch).map_err(|e| format!("{}: {e}", patch.display()))?;
     let new = coqc_format::patch::apply_patch(&old, &p)?;
@@ -79,7 +87,8 @@ pub fn patch_file(path: &Path, patch: &Path, out: &Path) -> Result<(String, u64)
     let part = std::path::PathBuf::from(part);
     std::fs::write(&part, &new).map_err(|e| format!("{}: {e}", part.display()))?;
     std::fs::rename(&part, out).map_err(|e| format!("{}: {e}", out.display()))?;
-    Ok((hex(&Sha256::digest(&new)), new.len() as u64))
+    let (reused, encoded) = coqc_format::coqd::block_counts();
+    Ok((hex(&Sha256::digest(&new)), new.len() as u64, json!({"ms": t0.elapsed().as_millis() as u64, "reused": reused, "encoded": encoded})))
 }
 
 /// Apply a `.coqid` index delta to the `.coqi` at `path`, writing the result to `out` (via `<out>.part`, then renamed). Needs no open
@@ -109,8 +118,8 @@ pub fn call(method: &str, a: &Value) -> Option<Result<Value, String>> {
         ),
         "patchFile" => Some(
             s("path")
-                .and_then(|p| s("patch").and_then(|q| s("out").and_then(|o| patch_file(Path::new(p), Path::new(q), Path::new(o)))))
-                .map(|(h, n)| json!({"sha256": h, "size": n})),
+                .and_then(|p| s("patch").and_then(|q| s("out").and_then(|o| patch_file_stats(Path::new(p), Path::new(q), Path::new(o)))))
+                .map(|(h, n, st)| json!({"sha256": h, "size": n, "ms": st["ms"], "reused": st["reused"], "encoded": st["encoded"]})),
         ),
         "patchIndexFile" => Some(
             s("path")

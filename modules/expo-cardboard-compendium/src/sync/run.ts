@@ -16,7 +16,7 @@ export interface EngineOps {
   sha256File(path: string): Promise<{ sha256: string; size: number }>;
   unzstFile(path: string, out: string): Promise<{ sha256: string; size: number }>;
   /** Apply a .coqp to the file at `path`, writing `out`; needs no open engine (used for overlays). */
-  patchFile(path: string, patch: string, out: string): Promise<{ sha256: string; size: number }>;
+  patchFile(path: string, patch: string, out: string): Promise<{ sha256: string; size: number; ms?: number; reused?: number; encoded?: number }>;
   /** Apply a .coqid to the .coqi at `path`, writing `out`; needs no open engine. Optional: without it the index is rebuilt on open. */
   patchIndexFile?(path: string, delta: string, out: string): Promise<{ sha256: string; size: number }>;
   attachOverlay(id: string, path: string): Promise<unknown>;
@@ -81,6 +81,8 @@ export interface SyncResult {
   reason?: FullReason;
   /** Why the patch chain failed when `reason` is 'fallback' (the full files were downloaded instead). */
   fallbackError?: string;
+  /** Diagnostics (0.0.9-1): per-step native timings and why the index was or was not patched. Safe to log; not for logic. */
+  notes?: string[];
   /** Formats this build cannot read yet (status 'needs_app_update'): ask the user to update the app. */
   required?: Partial<ModuleFormat> & { manifest?: number };
 }
@@ -197,13 +199,17 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
    * engine lock, so reads keep being served from the already-open dataset. The index is patched next (`patchIndex`); if that is
    * not possible the engine rebuilds (and rewrites) `cards.coqi` on the next open because it no longer matches the dataset.
    */
+  const notes: string[] = [];
   /**
    * Best effort (0.0.8-3): bring `cards.coqi` to the new dataset with the published index deltas (each ~200 B to ~180 KB) instead of
    * letting the engine rebuild it on the next open (10 s on a phone). Any miss (a step without a delta, a delta that does not apply,
    * a result that is not the published index) leaves the old file in place, which the engine sees as stale and rebuilds: never an error.
    */
   const patchIndex = async (chain: CardStep[]) => {
-    if (!engine.patchIndexFile || chain.some((s) => !s.indexDelta)) return;
+    if (!engine.patchIndexFile) return void notes.push('index: not patched (engine has no patchIndexFile: native module older than the JS)');
+    const missing = chain.filter((s) => !s.indexDelta);
+    if (missing.length) return void notes.push(`index: not patched (no index delta for ${missing.map((s) => `${s.patch.from}->${s.patch.to}`).join(', ')})`);
+    const tIdx = Date.now();
     let from = paths.coqi;
     try {
       for (const [i, s] of chain.entries()) {
@@ -221,7 +227,9 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
       const got = await engine.sha256File(from);
       if (got.sha256 !== index.raw!.sha256 || got.size !== index.raw!.size) throw new Error('patched index does not match the published one');
       await engine.moveFile(from, paths.coqi);
-    } catch {
+      notes.push(`index: patched with ${chain.length} delta(s) in ${Date.now() - tIdx}ms`);
+    } catch (e) {
+      notes.push(`index: patch failed, engine will rebuild (${e instanceof Error ? e.message : String(e)})`);
       if (from !== paths.coqi) await engine.removeFile(from);
     }
   };
@@ -233,7 +241,8 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
       const p = await fetchVerified(s.patch.patch, 'step.coqp.part');
       const out = tmp(`cards.coqd.${i % 2}.part`);
       try {
-        await engine.patchFile(from, p, out);
+        const st = await engine.patchFile(from, p, out);
+        notes.push(`patch ${s.patch.to}: native ${st.ms ?? '?'}ms, row blocks reused ${st.reused ?? '?'} / recompressed ${st.encoded ?? '?'}`);
       } finally {
         await engine.removeFile(p);
       }
@@ -317,7 +326,7 @@ export async function runSync(deps: SyncDeps, o: SyncOptions): Promise<SyncResul
   }
 
   const changed = status !== 'up_to_date' || updated === 'updated';
-  return { status, patches, overlays: updated, changed, ...(reason ? { reason } : {}), ...(fallbackError ? { fallbackError } : {}) };
+  return { status, patches, overlays: updated, changed, ...(reason ? { reason } : {}), ...(fallbackError ? { fallbackError } : {}), ...(notes.length ? { notes } : {}) };
 }
 
 /**

@@ -27,6 +27,7 @@ use crate::schema::*;
 use crate::table::*;
 use crate::dict::Dict;
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const MAGIC: &[u8; 4] = b"COQD";
 pub const FORMAT_VERSION: u16 = 3;
@@ -259,6 +260,19 @@ pub fn decode_meta(schema: &Schema, r: &mut Reader) -> Result<MetaBlock> {
 
 // ----------------------------------------------------------------- write ---
 
+static REUSED_BLOCKS: AtomicU32 = AtomicU32::new(0);
+static ENCODED_BLOCKS: AtomicU32 = AtomicU32::new(0);
+
+/// Diagnostics (0.0.9-1): zero the row-block counters, then read (reused, recompressed) after a `write_store*` call. Process-wide, so
+/// only meaningful when one write runs at a time (the sync's `patchFile` steps do).
+pub fn block_counts_reset() {
+    REUSED_BLOCKS.store(0, Ordering::Relaxed);
+    ENCODED_BLOCKS.store(0, Ordering::Relaxed);
+}
+pub fn block_counts() -> (u32, u32) {
+    (REUSED_BLOCKS.load(Ordering::Relaxed), ENCODED_BLOCKS.load(Ordering::Relaxed))
+}
+
 /// The block table + data of one table's rows section in an OLD file, so an unchanged block can be copied instead of recompressed.
 struct OldRows<'a> {
     nblocks: usize,
@@ -306,11 +320,13 @@ fn encode_one_block(def: &TableDef, t: &Table, b: usize, start: usize, end: usiz
         if rlen == raw.buf.len() {
             if let Ok(prev) = zstd_exact(comp, rlen) {
                 if prev == raw.buf {
+                    REUSED_BLOCKS.fetch_add(1, Ordering::Relaxed);
                     return Ok((comp.to_vec(), rlen, hash));
                 }
             }
         }
     }
+    ENCODED_BLOCKS.fetch_add(1, Ordering::Relaxed);
     let comp = zstd_compress(&raw.buf)?;
     let hash: [u8; 8] = Sha256::digest(&comp)[..8].try_into().unwrap();
     Ok((comp, raw.buf.len(), hash))
