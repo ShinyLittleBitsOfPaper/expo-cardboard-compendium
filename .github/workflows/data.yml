@@ -1,11 +1,11 @@
-# Daily data publishing (docs/roadmap.md, Milestone 1). Builds coqc from this checkout, compiles Scryfall + MTGJSON data,
+# Twice-daily data publishing (docs/roadmap.md, Milestone 1). Builds coqc from this checkout, compiles Scryfall + MTGJSON data,
 # verifies it, and publishes GitHub Releases: rolling `data-latest` (manifest.json + current full files) and one
 # immutable `data-<run>` prerelease per run (patches). Data releases are prereleases and never "Latest".
 # UNTESTED on GitHub (no runner here); scripts/test-data-pipeline.sh covers the same flow offline.
 name: data
 on:
   schedule:
-    - cron: '0 22 * * *'   # after Scryfall's ~21:05 UTC refresh; GitHub cron is best effort, the job is idempotent
+    - cron: '0 10,22 * * *'   # an hour after each of Scryfall's ~09:05 / ~21:05 UTC bulk refreshes (they refresh every 12 h); GitHub cron is best effort, the job is idempotent
   workflow_dispatch:
     inputs:
       publish:

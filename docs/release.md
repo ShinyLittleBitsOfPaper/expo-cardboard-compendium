@@ -18,7 +18,7 @@ Module distribution is a tagged GitHub Release tarball (no npm publish needed). 
 
 ## Data release procedure
 1. `data.yml` with `publish=false` (dry run: stage, sizes, manifest) until three consecutive runs are clean.
-2. First publish is a rebase (`rebase=true`); afterwards the daily cron (22:00 UTC) publishes patches.
+2. First publish is a rebase (`rebase=true`); afterwards the cron (10:00 and 22:00 UTC, an hour after Scryfall's 09:05/21:05 bulk refreshes) publishes patches. Scryfall prices change only once a day, so one of the two runs normally carries no price change.
 3. Clients read only `releases/download/data-latest/manifest.json`; never `releases/latest`.
 
 ## Package hygiene (open)
