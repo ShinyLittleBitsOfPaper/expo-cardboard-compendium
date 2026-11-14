@@ -30,6 +30,8 @@ pub struct Engine {
     dialect: Box<dyn Dialect>,
     sets: HashMap<String, Vec<u32>>,
     index_source: &'static str,
+    /// Timing of the last `open_with` phases (0.0.10-2 diagnostics), e.g. `read 40, decode 2100, ...` in ms; empty when unknown.
+    open_phases: String,
     /// the primary table (the one with a parent) and its parent's name
     primary: usize,
     parent: Option<String>,
@@ -65,13 +67,23 @@ pub fn dialect_for(schema_id: &str) -> Box<dyn Dialect> {
     }
 }
 
-type Loaded = (Store, [u8; 32], HashMap<Vec<u8>, u32>);
+type Loaded = (Store, [u8; 32], HashMap<Vec<u8>, u32>, String);
 
 fn load_dataset(path: &Path, dialect: &dyn Dialect) -> Result<Loaded, String> {
+    let ms = |t: std::time::Instant| t.elapsed().as_millis();
+    let t = std::time::Instant::now();
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let t_read = ms(t);
+    let t = std::time::Instant::now();
     let st = coqd::read_store(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    let t_decode = ms(t);
+    let t = std::time::Instant::now();
     let by_id = dialect.key_map(&st);
-    Ok((st, Sha256::digest(&bytes).into(), by_id))
+    let t_keys = ms(t);
+    let t = std::time::Instant::now();
+    let sha: [u8; 32] = Sha256::digest(&bytes).into();
+    let t_sha = ms(t);
+    Ok((st, sha, by_id, format!("coqd read {t_read}, decode {t_decode}, keys {t_keys}, sha {t_sha}")))
 }
 
 fn str_list(a: &Value, k: &str) -> Result<Vec<String>, String> {
@@ -95,7 +107,7 @@ impl Engine {
 
     /// Like `open` with an explicit dialect (query syntax, derived columns, record JSON, key lookup).
     pub fn open_with(coqd: &Path, coqi_path: Option<&Path>, dialect: Box<dyn Dialect>) -> Result<Engine, String> {
-        let (store, dsha, by_id) = load_dataset(coqd, dialect.as_ref())?;
+        let (store, dsha, by_id, mut phases) = load_dataset(coqd, dialect.as_ref())?;
         let primary = store.schema.tables.iter().position(|t| matches!(t.rel, Rel::Parent(_))).unwrap_or(0);
         let parent = match &store.schema.tables[primary].rel {
             Rel::Parent(p) => Some(p.clone()),
@@ -105,19 +117,26 @@ impl Engine {
             dialect,
             coqd_path: coqd.to_path_buf(),
             coqi_path: coqi_path.map(Path::to_path_buf),
-            store, dsha, parts: None, by_id, sets: HashMap::new(), index_source: "none", primary, parent, overlays: Vec::new(),
+            store, dsha, parts: None, by_id, sets: HashMap::new(), index_source: "none", open_phases: String::new(), primary, parent, overlays: Vec::new(),
         };
         if let Some(p) = &e.coqi_path {
+            let t = std::time::Instant::now();
             if let Ok(b) = std::fs::read(p) {
+                let t_read = t.elapsed().as_millis();
+                let t = std::time::Instant::now();
                 if let Ok((parts, sha)) = coqi::deserialize(&b, &e.store.schema) {
+                    let t_des = t.elapsed().as_millis();
+                    let t = std::time::Instant::now();
                     // attaching validates every column against the dataset's table sizes
                     if sha == e.dsha && GIndex::with_parts(&e.store, Some(e.dialect.hooks()), &parts).is_ok() {
+                        phases.push_str(&format!(", coqi read {t_read}, deserialize {t_des}, attach {}", t.elapsed().as_millis()));
                         e.parts = Some(parts);
                         e.index_source = "coqi";
                     }
                 }
             }
         }
+        e.open_phases = phases;
         e.ensure_index()?;
         Ok(e)
     }
@@ -336,7 +355,7 @@ impl Engine {
         let p = std::fs::read(patch_path).map_err(|e| format!("{}: {e}", patch_path.display()))?;
         let new = patch::apply_patch(&old, &p)?;
         write_atomic(&self.coqd_path, &new)?;
-        let (store, dsha, by_id) = load_dataset(&self.coqd_path, self.dialect.as_ref())?;
+        let (store, dsha, by_id, _) = load_dataset(&self.coqd_path, self.dialect.as_ref())?;
         (self.store, self.dsha, self.by_id) = (store, dsha, by_id);
         self.parts = None; // stale until an index delta is applied or the next search rebuilds
         self.index_source = "stale";
@@ -366,6 +385,7 @@ impl Engine {
             "oracleCards": self.parent.as_deref().and_then(|p| self.store.table(p)).map_or(0, |(_, t)| t.tomb.iter().filter(|t| !**t).count()),
             "datasetSha256": hex(&self.dsha),
             "index": self.index_source,
+            "openPhases": self.open_phases,
             "overlays": self.overlays.iter().map(|(k, o)| (k.clone(), json!({"sha256": hex(&o.sha), "rows": o.store.tables[0].rows(), "sourceDate": o.store.source_date}))).collect::<serde_json::Map<_, _>>(),
             "sets": self.sets.iter().map(|(k, v)| (k.clone(), json!(v.len()))).collect::<serde_json::Map<_, _>>(),
         })

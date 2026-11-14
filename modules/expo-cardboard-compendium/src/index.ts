@@ -9,6 +9,8 @@ export interface EngineInfo {
   oracleCards: number;
   datasetSha256: string;
   index: 'coqi' | 'built' | 'delta' | 'stale';
+  /** Module >= 0.0.10-2: per-phase milliseconds of the last open, e.g. `coqd read 40, decode 2100, keys 90, sha 120, coqi read ...`. */
+  openPhases?: string;
   sets: Record<string, number>;
   /** Attached overlays (prices, ...): file hash, row count, source date. */
   overlays: Record<string, { sha256: string; rows: number; sourceDate: number }>;
