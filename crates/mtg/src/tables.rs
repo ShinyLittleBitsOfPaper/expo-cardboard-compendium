@@ -14,7 +14,7 @@ pub fn mtg_schema() -> Schema {
     let en = |d: &str| T::Enum(d.to_string());
     Schema {
         id: "mtg".into(),
-        version: 1,
+        version: 2,
         dicts: DICTS.iter().map(|s| s.to_string()).collect(),
         tables: vec![
             TableDef {
@@ -63,13 +63,21 @@ pub fn mtg_schema() -> Schema {
                     C::new("digital", T::Bool, I::Exact, &[]),
                     C::new("finishes", T::Int, I::Set, &[]),
                     C::new("promo_types", T::Set("promo_types".into()), I::Set, &[]),
-                    C::new("legalities", T::Bytes, I::None, &[]),
                     C::new("flavor_text", T::Str, I::Text, &["ft"]),
                     C::new("artist", T::Str, I::Text, &["a"]),
                     C::new("images", T::Bytes, I::None, &[]),
                     C::new("faces", T::Bytes, I::None, &[]),
                     C::new("extra", T::Json, I::None, &[]),
                 ],
+            },
+            // 0.0.12: legalities moved out of the printing rows. Row i = printing row i. A legality change (a ban, a format added) used to
+            // re-send every affected 3 KB printing row in the patch and dirty its blocks; now it touches a few dozen bytes per row.
+            TableDef {
+                name: "printing_legal".into(),
+                rel: Rel::Sidecar("printing".into()),
+                key: None,
+                columnar: false,
+                columns: vec![C::new("legalities", T::Bytes, I::None, &[])],
             },
         ],
     }
@@ -137,13 +145,16 @@ pub fn to_store(ds: &Dataset) -> Store {
         ColData::Bool(pr.iter().map(|r| r.digital).collect()),
         ColData::Int(pr.iter().map(|r| r.finishes.map(|x| x as i64)).collect()),
         ColData::Set(pr.iter().map(|r| r.promo_types.clone()).collect()),
-        ColData::Bytes(pr.iter().map(|r| opt_bytes(r.legalities.is_some(), |w| encode_nibbles(w, &r.legalities))).collect()),
         ColData::Str(pr.iter().map(|r| r.flavor_text.clone()).collect()),
         ColData::Str(pr.iter().map(|r| r.artist.clone()).collect()),
         ColData::Bytes(pr.iter().map(|r| opt_bytes(r.images != Images::None, |w| r.images.encode(w))).collect()),
         ColData::Bytes(pr.iter().map(|r| opt_bytes(r.faces.is_some(), |w| encode_printing_faces(w, &r.faces))).collect()),
         ColData::Json(pr.iter().map(|r| r.extra.clone()).collect()),
     ];
+
+    let l = &mut st.tables[3];
+    l.tomb = pr.iter().map(|r| r.tombstone).collect();
+    l.cols = vec![ColData::Bytes(pr.iter().map(|r| opt_bytes(r.legalities.is_some(), |w| encode_nibbles(w, &r.legalities))).collect())];
     st
 }
 
@@ -216,7 +227,7 @@ pub fn into_dataset(mut st: Store) -> Result<Dataset> {
     let (mut scode, mut sname, mut cn, mut rarity, mut border) = (take!(2, 5, Str), take!(2, 6, Str), take!(2, 7, Str), take!(2, 8, Enum), take!(2, 9, Enum));
     let (mut promo, mut reprint, mut digital, mut fin, mut ptypes) = (take!(2, 10, Bool), take!(2, 11, Bool), take!(2, 12, Bool), take!(2, 13, Int), take!(2, 14, Set));
     let (mut legal, mut flavor, mut artist, mut images, mut pfaces, mut pextra) =
-        (take!(2, 15, Bytes), take!(2, 16, Str), take!(2, 17, Str), take!(2, 18, Bytes), take!(2, 19, Bytes), take!(2, 20, Json));
+        (take!(3, 0, Bytes), take!(2, 15, Str), take!(2, 16, Str), take!(2, 17, Bytes), take!(2, 18, Bytes), take!(2, 19, Json));
     let mut printings = Vec::with_capacity(p_rows);
     for tomb in p_tomb {
         let (id, orow, layout, lang, rel) = (id.next().unwrap(), orow.next().unwrap(), layout.next().unwrap(), lang.next().unwrap(), rel.next().unwrap());
@@ -340,12 +351,12 @@ pub fn printing_at(st: &Store, i: usize) -> Result<PrintingRecord> {
         digital: col!(st, 2, 12, Bool)[i],
         finishes: col!(st, 2, 13, Int)[i].map(|x| x as u8),
         promo_types: col!(st, 2, 14, Set)[i].clone(),
-        legalities: opt_dec(&col!(st, 2, 15, Bytes)[i], decode_nibbles)?.flatten(),
-        flavor_text: col!(st, 2, 16, Str)[i].clone(),
-        artist: col!(st, 2, 17, Str)[i].clone(),
-        images: opt_dec(&col!(st, 2, 18, Bytes)[i], Images::decode)?.unwrap_or(Images::None),
-        faces: opt_dec(&col!(st, 2, 19, Bytes)[i], decode_printing_faces)?.flatten(),
-        extra: col!(st, 2, 20, Json)[i].clone(),
+        legalities: opt_dec(&col!(st, 3, 0, Bytes)[i], decode_nibbles)?.flatten(),
+        flavor_text: col!(st, 2, 15, Str)[i].clone(),
+        artist: col!(st, 2, 16, Str)[i].clone(),
+        images: opt_dec(&col!(st, 2, 17, Bytes)[i], Images::decode)?.unwrap_or(Images::None),
+        faces: opt_dec(&col!(st, 2, 18, Bytes)[i], decode_printing_faces)?.flatten(),
+        extra: col!(st, 2, 19, Json)[i].clone(),
     })
 }
 

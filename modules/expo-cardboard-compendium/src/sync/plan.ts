@@ -8,7 +8,7 @@ export interface ModuleFormat {
   coqd: number; // bases and overlays
   coqi: number; // search index
 }
-export const MODULE_FORMAT: ModuleFormat = { coqd: 3, coqi: 2 };
+export const MODULE_FORMAT: ModuleFormat = { coqd: 4, coqi: 2 };
 
 /** What is on the device (persisted by the sync layer in `state.json`). */
 export interface LocalState {

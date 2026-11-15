@@ -1,4 +1,5 @@
-//! MTGJSON prices -> a `.coqd` overlay (S4a: no separate price format any more). v1 scope: retail only, TCGplayer (USD) and Cardmarket (EUR), paper.
+//! MTGJSON prices -> a `.coqd` overlay (S4a: no separate price format any more). Scope: retail only, paper: TCGplayer (USD), Cardmarket (EUR),
+//! Card Kingdom (USD) and Cardsphere (USD) (0.0.12: the last two are new; schema version 2).
 //! MTGJSON price entries are keyed by MTGJSON uuid; `AllIdentifiers` maps uuid -> `identifiers.scryfallId`.
 //! The id map is cached (COQM file) and rebuilt only when the prices file has uuids it does not know.
 
@@ -16,7 +17,12 @@ type Id = [u8; 16];
 
 // ----------------------------------------------------------------- overlay ---
 
-pub const COLUMNS: [&str; 6] = ["tcg_normal", "tcg_foil", "tcg_etched", "cm_normal", "cm_foil", "cm_etched"];
+pub const COLUMNS: [&str; 12] = [
+    "tcg_normal", "tcg_foil", "tcg_etched", "cm_normal", "cm_foil", "cm_etched", "ck_normal", "ck_foil", "ck_etched", "cs_normal", "cs_foil", "cs_etched",
+];
+/// MTGJSON provider key and the index of its `normal` column in `COLUMNS` (`foil`, `etched` follow).
+pub const PROVIDERS: [(&str, usize); 4] = [("tcgplayer", 0), ("cardmarket", 3), ("cardkingdom", 6), ("cardsphere", 9)];
+pub const NCOL: usize = COLUMNS.len();
 /// Schema id of the price overlay.
 pub const SCHEMA_ID: &str = "mtg-prices";
 /// Store prop naming the table of the base dataset whose rows the overlay's rows follow (row i = row i).
@@ -26,7 +32,7 @@ pub const PROP_OVERLAY_OF: &str = "overlay_of";
 pub fn price_schema() -> Schema {
     Schema {
         id: SCHEMA_ID.into(),
-        version: 1,
+        version: 2,
         dicts: vec![],
         tables: vec![TableDef {
             name: "price".into(),
@@ -43,7 +49,7 @@ pub fn price_schema() -> Schema {
 pub struct PriceTable {
     pub cards_epoch: u32,
     pub date: u32,
-    pub cols: [Vec<u32>; 6],
+    pub cols: [Vec<u32>; NCOL],
 }
 
 impl PriceTable {
@@ -181,7 +187,7 @@ pub struct PriceReport {
     pub not_in_cards: usize,
     pub conflicts: usize,
     pub rows_priced: usize,
-    pub per_column: [usize; 6],
+    pub per_column: [usize; NCOL],
 }
 
 fn cents(x: f64) -> Option<u32> {
@@ -207,7 +213,7 @@ pub fn compile_prices(ds: &Dataset, idmap: &HashMap<Id, Id>, json: &[u8]) -> Res
             rep.not_in_cards += 1;
             continue;
         };
-        for (provider, base) in [("tcgplayer", 0usize), ("cardmarket", 3)] {
+        for (provider, base) in PROVIDERS {
             let Some(p) = f.data[k].paper.get(provider) else { continue };
             for (fi, finish) in ["normal", "foil", "etched"].iter().enumerate() {
                 // latest date key in the entry (the Today file has exactly one)
@@ -223,9 +229,9 @@ pub fn compile_prices(ds: &Dataset, idmap: &HashMap<Id, Id>, json: &[u8]) -> Res
             }
         }
     }
-    for c in 0..6 {
+    for c in 0..NCOL {
         rep.per_column[c] = t.cols[c].iter().filter(|v| **v != 0).count();
     }
-    rep.rows_priced = (0..t.rows()).filter(|&i| (0..6).any(|c| t.cols[c][i] != 0)).count();
+    rep.rows_priced = (0..t.rows()).filter(|&i| (0..NCOL).any(|c| t.cols[c][i] != 0)).count();
     Ok((t, rep))
 }

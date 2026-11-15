@@ -27,7 +27,8 @@ fn prices(day: &str, bolt: f64) -> String {
  "aaaaaaaa-0000-5000-8000-000000000001":{{"paper":{{
    "tcgplayer":{{"buylist":{{}},"retail":{{"normal":{{"{day}":{bolt}}},"foil":{{"{day}":2.5}}}},"currency":"USD"}},
    "cardmarket":{{"retail":{{"etched":{{"{day}":1.05}}}},"currency":"EUR"}},
-   "cardkingdom":{{"retail":{{"normal":{{"{day}":9.99}}}}}}}},"mtgo":{{"cardhoarder":{{"retail":{{"normal":{{"{day}":0.03}}}}}}}}}},
+   "cardkingdom":{{"retail":{{"normal":{{"{day}":9.99}}}}}},
+   "cardsphere":{{"retail":{{"foil":{{"{day}":7.5}}}}}}}},"mtgo":{{"cardhoarder":{{"retail":{{"normal":{{"{day}":0.03}}}}}}}}}},
  "aaaaaaaa-0000-5000-8000-000000000002":{{"paper":{{"tcgplayer":{{"retail":{{"normal":{{"{day}":0.1}}}}}}}}}},
  "aaaaaaaa-0000-5000-8000-000000000003":{{"paper":{{"tcgplayer":{{"retail":{{"normal":{{"{day}":1.0}}}}}}}}}},
  "aaaaaaaa-0000-5000-8000-000000000004":{{"paper":{{"tcgplayer":{{"retail":{{"normal":{{"{day}":1.0}}}}}}}}}},
@@ -43,7 +44,7 @@ fn table(day: &str, bolt: f64) -> (PriceTable, coqc::prices::PriceReport) {
 }
 
 #[test]
-fn maps_uuids_and_keeps_only_tcg_and_cardmarket_retail() {
+fn maps_uuids_and_keeps_only_the_four_paper_providers_retail() {
     let (t, r) = table("2026-10-24", 0.5);
     assert_eq!((r.date, r.entries, r.unmapped, r.not_in_cards, r.conflicts), (20261024, 5, 2, 1, 0));
     let ds = cards();
@@ -52,6 +53,9 @@ fn maps_uuids_and_keeps_only_tcg_and_cardmarket_retail() {
     assert_eq!(t.cents(row(BOLT1), 1), Some(250));
     assert_eq!(t.cents(row(BOLT1), 2), None);
     assert_eq!(t.cents(row(BOLT1), 5), Some(105)); // cardmarket etched
+    assert_eq!(t.cents(row(BOLT1), 6), Some(999)); // card kingdom normal
+    assert_eq!(t.cents(row(BOLT1), 10), Some(750)); // cardsphere foil
+    assert_eq!(r.per_column[6], 1);
     assert_eq!(t.cents(row(BOLT2), 0), Some(10));
     assert_eq!(r.rows_priced, 2);
     assert_eq!(t.rows(), ds.printings.len());
@@ -83,7 +87,7 @@ fn overlay_sizes_synthetic_120k() {
     };
     let n = 120_000;
     let mut a = PriceTable::new(1, 20261024, n);
-    for c in 0..6 {
+    for c in 0..coqc::prices::NCOL {
         for i in 0..n {
             if rnd() % 100 < if c == 0 || c == 3 { 60 } else { 12 } {
                 let r = rnd() % 1000;
@@ -93,7 +97,7 @@ fn overlay_sizes_synthetic_120k() {
     }
     let mut b = a.clone();
     b.date = 20261025;
-    for c in 0..6 {
+    for c in 0..coqc::prices::NCOL {
         for i in 0..n {
             if b.cols[c][i] != 0 && rnd() % 100 < 35 {
                 b.cols[c][i] = (b.cols[c][i] as i64 + (rnd() % 7) as i64 - 3).max(2) as u32;
@@ -108,7 +112,7 @@ fn overlay_sizes_synthetic_120k() {
     };
     let old_delta = {
         let mut w = coqc_format::codec::Writer::new();
-        for c in 0..6 {
+        for c in 0..coqc::prices::NCOL {
             for i in 0..n {
                 let d = b.cols[c][i] as i64 - a.cols[c][i] as i64;
                 w.uvarint(((d << 1) ^ (d >> 63)) as u64);
@@ -127,7 +131,7 @@ fn patch_handles_appended_rows_and_refuses_shrinking() {
     let (a, _) = table("2026-10-24", 0.5);
     let mut b = a.clone();
     b.date = 20261025;
-    for c in 0..6 {
+    for c in 0..coqc::prices::NCOL {
         b.cols[c].extend([0, 7, 0]);
     }
     b.cols[0][0] = 99;

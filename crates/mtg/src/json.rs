@@ -42,6 +42,57 @@ pub const LEGALITY_NAMES: [&str; 5] = ["", "legal", "not_legal", "restricted", "
 /// the real value differs from what `derived_value` produces.
 pub const DERIVED_KEYS: [&str; 4] = ["uri", "rulings_uri", "prints_search_uri", "scryfall_uri"];
 
+/// Ruby `CGI.escape`: unreserved `*-._` and alphanumerics kept, space -> `+`, everything else `%XX` (uppercase).
+fn cgi_escape(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => out.push(b as char),
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// `purchase_uris` as Scryfall builds it (0.0.12): per marketplace a product link when the card has that marketplace's id
+/// (`tcgplayer_id`, `cardmarket_id`, `mtgo_id` for Cardhoarder), else a search link by card name. `None` when the card has none of the
+/// ids: such cards either have no `purchase_uris` or carry name searches that do not follow this rule, and the compiler stores
+/// the real object for them. The compiler also stores the real object wherever it differs from this one.
+pub fn derived_purchase_uris(name: Option<&str>, tcgplayer_id: Option<u64>, cardmarket_id: Option<u64>, mtgo_id: Option<u64>) -> Option<Value> {
+    if tcgplayer_id.is_none() && cardmarket_id.is_none() && mtgo_id.is_none() {
+        return None;
+    }
+    // searches use the front face's name (`A // B` -> `A`)
+    let q = cgi_escape(name?.split(" // ").next().unwrap_or_default());
+    let mut m = Map::new();
+    m.insert(
+        "tcgplayer".into(),
+        Value::from(match tcgplayer_id {
+            Some(id) => format!("https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F{id}%3Fpage%3D1"),
+            None => format!(
+                "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fsearch%2Fmagic%2Fproduct%3FproductLineName%3Dmagic%26q%3D{}%26view%3Dgrid",
+                cgi_escape(&q)
+            ),
+        }),
+    );
+    m.insert(
+        "cardmarket".into(),
+        Value::from(match cardmarket_id {
+            Some(id) => format!("https://www.cardmarket.com/en/Magic/Products?idProduct={id}&referrer=scryfall&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall"),
+            None => format!("https://www.cardmarket.com/en/Magic/Products/Search?referrer=scryfall&searchString={q}&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall"),
+        }),
+    );
+    m.insert(
+        "cardhoarder".into(),
+        Value::from(match mtgo_id {
+            Some(id) => format!("https://www.cardhoarder.com/cards/{id}?affiliate_id=scryfall&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall"),
+            None => format!("https://www.cardhoarder.com/cards?affiliate_id=scryfall&data%5Bsearch%5D={q}&ref=card-profile&utm_campaign=affiliate&utm_medium=card&utm_source=scryfall"),
+        }),
+    );
+    Some(Value::Object(m))
+}
+
 /// Scryfall-style URL slug: lowercase ASCII letters/digits, apostrophes dropped, other runs -> `-`.
 pub fn slug(name: &str) -> String {
     let mut out = String::new();
@@ -282,6 +333,13 @@ pub fn card_json(meta: &Meta, o: &OracleRecord, ranks: &Ranks, p: &PrintingRecor
         m.insert("card_faces".into(), Value::Array(arr));
     }
 
+    // 0.0.12: purchase_uris from the marketplace ids kept in `extra`; a stored `purchase_uris` (exceptions) overrides it in the merge below.
+    if let Some(Value::Object(e)) = p.extra.as_deref().and_then(|s| serde_json::from_str::<Value>(s).ok()) {
+        let num = |k: &str| e.get(k).and_then(|v| v.as_u64());
+        if let Some(v) = derived_purchase_uris(o.name.as_deref(), num("tcgplayer_id"), num("cardmarket_id"), num("mtgo_id")) {
+            m.insert("purchase_uris".into(), v);
+        }
+    }
     merge_extra(&mut m, &p.extra);
     if let Some(Value::Array(absent)) = m.remove("__absent") {
         for k in absent {
@@ -308,5 +366,22 @@ pub fn normalize(v: &mut Value) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod purchase_tests {
+    use super::*;
+
+    #[test]
+    fn purchase_uris_follow_ids_then_name_searches() {
+        let v = derived_purchase_uris(Some("Assassin's Trophy // Other"), Some(7), None, Some(9)).unwrap();
+        assert_eq!(v["tcgplayer"], "https://partner.tcgplayer.com/c/4931599/1830156/21018?subId1=api&u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F7%3Fpage%3D1");
+        assert!(v["cardmarket"].as_str().unwrap().ends_with("Products/Search?referrer=scryfall&searchString=Assassin%27s+Trophy&utm_campaign=card_prices&utm_medium=text&utm_source=scryfall"));
+        assert!(v["cardhoarder"].as_str().unwrap().starts_with("https://www.cardhoarder.com/cards/9?affiliate_id=scryfall"));
+        let t = derived_purchase_uris(Some("The Monarch"), None, Some(5), None).unwrap();
+        assert!(t["tcgplayer"].as_str().unwrap().contains("%26q%3DThe%2BMonarch%26view%3Dgrid"));
+        assert!(t["cardhoarder"].as_str().unwrap().contains("data%5Bsearch%5D=The+Monarch&"));
+        assert_eq!(derived_purchase_uris(Some("X"), None, None, None), None);
     }
 }

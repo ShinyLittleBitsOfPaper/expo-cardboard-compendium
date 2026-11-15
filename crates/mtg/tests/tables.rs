@@ -69,7 +69,7 @@ fn v3_file_roundtrips_tombstones_and_is_deterministic() {
     assert_eq!(back.printings, d.printings);
     assert!(back.printings[n].tombstone && back.printings[n].scryfall_id == [7; 16]);
     assert_eq!(&a[..4], b"COQD");
-    assert_eq!(u16::from_le_bytes([a[4], a[5]]), 3);
+    assert_eq!(u16::from_le_bytes([a[4], a[5]]), 4);
 }
 
 #[test]
@@ -84,4 +84,20 @@ fn patch_carries_changed_tombstoned_and_appended_rows() {
     let (patch, info) = coqc_format::patch::make_patch(&ob, &nb).unwrap();
     assert_eq!((info.changed("printing"), info.appended("printing"), info.changed("oracle_ranks")), (2, 1, 1));
     assert_eq!(coqc_format::patch::apply_patch(&ob, &patch).unwrap(), nb);
+}
+
+#[test]
+fn legality_change_patches_only_the_sidecar() {
+    let old = ds();
+    let mut new = old.clone();
+    let l = new.printings[0].legalities.clone().unwrap_or_else(|| vec![1; 5]);
+    let mut l2 = l.clone();
+    l2[0] = if l[0] == 4 { 1 } else { l[0] + 1 };
+    new.printings[0].legalities = Some(l2);
+    let (ob, nb) = (coqc_mtg::write(&old).unwrap().0, coqc_mtg::write(&new).unwrap().0);
+    let (patch, info) = coqc_format::patch::make_patch(&ob, &nb).unwrap();
+    // the 3 KB printing row does not travel; one tiny sidecar row does
+    assert_eq!((info.changed("printing"), info.changed("printing_legal")), (0, 1));
+    assert_eq!(coqc_format::patch::apply_patch(&ob, &patch).unwrap(), nb);
+    assert_eq!(coqc_mtg::read(&nb).unwrap().printings[0].legalities, new.printings[0].legalities);
 }

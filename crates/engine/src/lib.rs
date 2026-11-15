@@ -244,12 +244,15 @@ impl Engine {
 
     /// MTGJSON prices of printing rows from the attached `prices` overlay, Scryfall-shaped (`usd`, `usd_foil`, `usd_etched`, `eur`,
     /// `eur_foil`, `eur_etched`: strings with two decimals, null = no price). `usd*` is TCGplayer retail, `eur*` Cardmarket retail.
+    /// 0.0.12: also `cardkingdom`, `cardkingdom_foil`, `cardkingdom_etched` (USD) and `cardsphere`, `cardsphere_foil`, `cardsphere_etched` (USD).
     /// Row i of the result belongs to `rows[i]`; an unknown or removed row gives null.
     pub fn prices(&self, rows: &[u32]) -> Result<Value, String> {
         let (_, o) = self.overlays.iter().find(|(i, _)| i == "prices").ok_or("prices overlay not attached (attachOverlay)")?;
         let (def, t) = o.store.table("price").ok_or("prices overlay has no price table")?;
         let col = |name: &str| def.columns.iter().position(|c| c.name == name).ok_or_else(|| format!("prices overlay lacks {name}"));
-        let keys = [("usd", "tcg_normal"), ("usd_foil", "tcg_foil"), ("usd_etched", "tcg_etched"), ("eur", "cm_normal"), ("eur_foil", "cm_foil"), ("eur_etched", "cm_etched")];
+        let keys = [("usd", "tcg_normal"), ("usd_foil", "tcg_foil"), ("usd_etched", "tcg_etched"), ("eur", "cm_normal"), ("eur_foil", "cm_foil"), ("eur_etched", "cm_etched"),
+            ("cardkingdom", "ck_normal"), ("cardkingdom_foil", "ck_foil"), ("cardkingdom_etched", "ck_etched"),
+            ("cardsphere", "cs_normal"), ("cardsphere_foil", "cs_foil"), ("cardsphere_etched", "cs_etched")];
         let mut cols = Vec::new();
         for (k, c) in keys {
             match &t.cols[col(c)?] {

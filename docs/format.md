@@ -1,4 +1,6 @@
-# COQD format, version 3 (schema driven)
+# COQD format, version 4 (schema driven)
+
+> 0.0.11-3: format 4 = MTG schema v2. `legalities` moved from `printing` to the row-aligned sidecar `printing_legal` (a legality change no longer re-sends 3 KB printing rows: a simulated 3,587-row change went from a 482 KB / 31-block patch to 8 KB / 0 printing blocks); `purchase_uris` is derived from `tcgplayer_id`/`cardmarket_id`/`mtgo_id` and the front-face name (stored only where the real object differs: cards with no ids, some split/DFC names). v3 files and v3 readers are rejected both ways, so the first release after this needs `REBASE=1`.
 
 (0.0.2-14, S2b of docs/schema-design.md.) The authoritative layout is the header comment
 of `crates/format/src/coqd.rs`: a section directory (`kind`, `arg`, offset, len), a SCHEMA section (tables, typed columns, relations,

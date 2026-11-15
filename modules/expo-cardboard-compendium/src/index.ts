@@ -15,7 +15,11 @@ export interface EngineInfo {
   /** Attached overlays (prices, ...): file hash, row count, source date. */
   overlays: Record<string, { sha256: string; rows: number; sourceDate: number }>;
 }
-export type Prices = Record<'usd' | 'usd_foil' | 'usd_etched' | 'eur' | 'eur_foil' | 'eur_etched', string | null>;
+export type Prices = Record<
+  | 'usd' | 'usd_foil' | 'usd_etched' | 'eur' | 'eur_foil' | 'eur_etched'
+  | 'cardkingdom' | 'cardkingdom_foil' | 'cardkingdom_etched' | 'cardsphere' | 'cardsphere_foil' | 'cardsphere_etched',
+  string | null
+>;
 export interface SearchOptions {
   limit?: number;
   offset?: number;
@@ -36,7 +40,7 @@ export const info = () => call<EngineInfo>('info');
 export const search = (query: string, o: SearchOptions = {}) => call<SearchResult>('search', { query, ...o });
 /** Records (MTG: card JSON) for primary-table rows; null for a removed row. */
 export const getRecords = (rows: Row[], o: { prices?: boolean } = {}) => call<(Card | null)[]>('getRecords', { rows, ...o });
-/** MTGJSON retail prices of rows, Scryfall-shaped (`usd`, `usd_foil`, `usd_etched` = TCGplayer; `eur`, `eur_foil`, `eur_etched` = Cardmarket; strings, null = none). Needs the prices overlay. */
+/** MTGJSON retail prices of rows, Scryfall-shaped (`usd`, `usd_foil`, `usd_etched` = TCGplayer; `eur`, `eur_foil`, `eur_etched` = Cardmarket; `cardkingdom*`, `cardsphere*` = Card Kingdom / Cardsphere USD (0.0.11-3); strings, null = none). Needs the prices overlay. */
 export const getPrices = (rows: Row[]) => call<(Prices | null)[]>('getPrices', { rows });
 /** One record by its natural key (MTG: Scryfall id), null when unknown. */
 export const getByKey = (key: string) => call<Card | null>('getByKey', { key });

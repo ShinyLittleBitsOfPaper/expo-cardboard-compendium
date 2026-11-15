@@ -30,8 +30,9 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const MAGIC: &[u8; 4] = b"COQD";
-pub const FORMAT_VERSION: u16 = 3;
-pub const MIN_READER: u16 = 3;
+pub const FORMAT_VERSION: u16 = 4;
+/// 4 (0.0.12): MTG schema v2 (`printing_legal` sidecar, 12 price columns). Older readers reject a v4 file (`min_reader`), a v4 reader rejects v3.
+pub const MIN_READER: u16 = 4;
 pub const BLOCK_ROWS: usize = 256;
 /// Pinned so identical input yields identical bytes (also pinned via Cargo.lock).
 pub const ZSTD_LEVEL: i32 = 15;

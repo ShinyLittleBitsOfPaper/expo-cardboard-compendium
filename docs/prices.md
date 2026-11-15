@@ -2,11 +2,11 @@
 
 Since S4a (0.0.2-24) prices are an ordinary `.coqd` dataset, not a separate format (`.coqr`/`.coqx` are gone). Code:
 `crates/mtg/src/prices.rs` (schema, `PriceTable`, MTGJSON ingestion), generic container/patch in `crates/format`.
-Source: MTGJSON `AllPricesToday` (retail only, paper). v1 columns: TCGplayer USD and Cardmarket EUR x
+Source: MTGJSON `AllPricesToday` (retail only, paper). columns (schema v2, 0.0.11-3): Card Kingdom USD and Cardsphere USD were added after TCGplayer USD and Cardmarket EUR x
 normal/foil/etched. Buylists, other providers (cardkingdom, manapool) and history are not stored yet.
 
 - Schema id `mtg-prices`, one **columnar** table `price` (`TableDef::columnar`: Int columns only, stored column by column) with
-  columns `tcg_normal, tcg_foil, tcg_etched, cm_normal, cm_foil, cm_etched`; a cell is cents, NULL = no price.
+  columns `tcg_*, cm_*, ck_*, cs_*` (each `normal, foil, etched`, 12 columns; engine keys `cardkingdom*`, `cardsphere*`); a cell is cents, NULL = no price.
 - Row i = PRINTING row i of the card file with the same `epoch` (store prop `overlay_of = printing`); rows past the table mean "no
   price". `source_date` = MTGJSON `meta.date`.
 - Patch = ordinary `.coqp` (COQP v2) between two overlays; for a columnar table the patch body is one zigzag-varint delta stream per

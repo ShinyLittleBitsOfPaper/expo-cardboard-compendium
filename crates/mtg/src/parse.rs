@@ -244,14 +244,20 @@ impl P {
                 };
                 Expr::Stat { stat: stat.into(), op, rhs }
             }
-            "usd" | "usdfoil" | "usdetched" | "eur" | "eurfoil" | "euretched" => {
+            "usd" | "usdfoil" | "usdetched" | "eur" | "eurfoil" | "euretched" | "ck" | "ckfoil" | "cketched" | "cs" | "csfoil" | "csetched" => {
                 let col = match key {
                     "usd" => "tcg_normal",
                     "usdfoil" => "tcg_foil",
                     "usdetched" => "tcg_etched",
                     "eur" => "cm_normal",
                     "eurfoil" => "cm_foil",
-                    _ => "cm_etched",
+                    "euretched" => "cm_etched",
+                    "ck" => "ck_normal",
+                    "ckfoil" => "ck_foil",
+                    "cketched" => "ck_etched",
+                    "cs" => "cs_normal",
+                    "csfoil" => "cs_foil",
+                    _ => "cs_etched",
                 };
                 let amount: f64 = v.parse().map_err(|_| ParseError(format!("bad amount: {v}")))?;
                 if !amount.is_finite() || amount < 0.0 || amount > 1.0e7 {

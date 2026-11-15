@@ -292,7 +292,7 @@ pub fn derive_store(st: &Store) -> Result<Vec<DerivedCol>, String> {
     let bad = || "column type".to_string();
     let col = |c: usize| &st.tables[2].cols[c];
     let (ColData::Enum(layout_c), ColData::Json(extra_c), ColData::Set(ptypes_c), ColData::Str(set_c), ColData::Str(cn_c), ColData::Enum(rar_c)) =
-        (col(2), col(20), col(14), col(5), col(7), col(8))
+        (col(2), col(19), col(14), col(5), col(7), col(8))
     else {
         return Err(bad());
     };
@@ -404,18 +404,28 @@ impl Hooks for MtgHooks {
             // args: [mode (legal|banned|restricted), format]
             "legal" => {
                 let st = ix.store();
-                let t = ix.table_id("printing").ok_or("no printing table")?;
+                let t = ix.table_id("printing_legal").ok_or("no printing_legal table")?;
                 let ci = st.schema.tables[t].columns.iter().position(|c| c.name == "legalities").ok_or("no legalities column")?;
                 let ColData::Bytes(col) = &st.tables[t].cols[ci] else { return Err("legalities column type".into()) };
                 let fid = tables::meta_of(st).formats.id(&args[1]).ok_or_else(|| format!("unknown format: {}", args[1]))? as usize;
                 let mode = args[0].as_str();
+                // Printings share a few hundred distinct legality blobs, so decode each blob once per query (0.0.12).
+                let seen: std::cell::RefCell<std::collections::HashMap<&[u8], bool>> = Default::default();
                 ix.pred("printing", |i| {
-                    let v = col[i].as_deref().and_then(|b| decode_nibbles(&mut Reader::new(b)).ok().flatten()).and_then(|v| v.get(fid).copied());
-                    match mode {
-                        "banned" => v == Some(4),
-                        "restricted" => v == Some(3),
-                        _ => matches!(v, Some(1 | 3)),
+                    let Some(b) = col.get(i).and_then(|c| c.as_deref()) else { return false };
+                    if let Some(&hit) = seen.borrow().get(b) {
+                        return hit;
                     }
+                    let hit = {
+                        let v = decode_nibbles(&mut Reader::new(b)).ok().flatten().and_then(|v| v.get(fid).copied());
+                        match mode {
+                            "banned" => v == Some(4),
+                            "restricted" => v == Some(3),
+                            _ => matches!(v, Some(1 | 3)),
+                        }
+                    };
+                    seen.borrow_mut().insert(b, hit);
+                    hit
                 })
             }
             // args: [printing text column, folded needle]

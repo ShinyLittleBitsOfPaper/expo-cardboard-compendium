@@ -517,6 +517,19 @@ fn printing_from_card(
             _ => {}
         }
     }
+    // 0.0.12: `purchase_uris` is built from the marketplace ids (see `derived_purchase_uris`); stored only where the real object differs.
+    {
+        let num = |k: &str| rest.get(k).and_then(|v| v.as_u64());
+        let want = derived_purchase_uris(o.name.as_deref(), num("tcgplayer_id"), num("cardmarket_id"), num("mtgo_id"));
+        match (rest.get("purchase_uris"), want) {
+            (Some(have), Some(want)) if *have == want => {
+                rest.remove("purchase_uris");
+                stats.derived.entry("purchase_uris".to_string()).or_default().0 += 1;
+            }
+            (Some(_), _) => stats.derived.entry("purchase_uris".to_string()).or_default().1 += 1,
+            _ => {}
+        }
+    }
     let rarity = take_dict(&mut rest, &mut spill, "rarity", &meta.rarities);
     let border_color = take_dict(&mut rest, &mut spill, "border_color", &meta.border_colors);
     let promo = take_bool(&mut rest, &mut spill, "promo");
