@@ -33,6 +33,14 @@ ds() {  # dataset-id jq-expr : a field of that dataset in the previous manifest 
 if curl -fsSL --retry 3 -o "$PREVM" "$MURL" && jq -e '.manifest_version == 2' "$PREVM" >/dev/null 2>&1; then
   PSTAMP="$(ds cards .stamp)"; PPRICE="$(ds prices .stamp)"
   echo "current: cards $PSTAMP prices $PPRICE (epoch $(jq -r .epoch "$PREVM"))"
+  if [ "${REBASE:-0}" = 1 ]; then
+    # A rebase starts a new chain: the previous files may be an older format this build cannot read (v3 vs v4), and nothing
+    # can patch across them, so do not restore them or compile on top of them. PREVM is kept only for the epoch bump.
+    echo "REBASE=1: compiling from scratch, not on top of $PSTAMP"
+    rm -f data/daily/releases/cards-*.coqd* data/daily/releases/cards-*.coqi* data/daily/patches/*.coqp data/daily/patches/*.coqid \
+          data/prices/releases/prices-*.coqd* data/prices/patches/*.coqp
+    PSTAMP=""; PPRICE=""
+  else
   CF="data/daily/releases/$(ds cards .file.name)"
   [ -f "$CF" ] || fetch "$(ds cards .file.url)" "$CF" "$(ds cards .file.sha256)"
   PRF="data/prices/releases/$(ds prices .file.name)"
@@ -42,6 +50,7 @@ if curl -fsSL --retry 3 -o "$PREVM" "$MURL" && jq -e '.manifest_version == 2' "$
     fetch "$(ds cards-index .file.url)" "$IDX.zst" "$(ds cards-index .file.sha256)"
     "$BIN" unzst "$IDX.zst" -o "$IDX" >/dev/null; rm -f "$IDX.zst"
     [ "$(sha256sum "$IDX" | cut -d' ' -f1)" = "$(ds cards-index .raw.sha256)" ] || { echo "index hash mismatch" >&2; exit 1; }
+  fi
   fi
 else
   rm -f "$PREVM"; PSTAMP=""; PPRICE=""; echo "no published (v2) release yet: first release"
