@@ -26,6 +26,7 @@ version="${seq%-*}"; n="${seq##*-}"
 if [ "$version" != "$cargo_version" ]; then version="$cargo_version"; n=0; fi   # new release restarts at -1
 if [ "$BUMP" = 1 ]; then n=$((n + 1)); fi
 echo "$version-$n" > .bundle-seq
+scripts/changelog.py check "$version-$n" || echo "warning: add a CHANGELOG.md entry for bundle $version-$n under '## Unreleased' (see the header of CHANGELOG.md)" >&2
 name="expo-cardboard-compendium-$version-$n"
 
 mkdir -p "$OUT"

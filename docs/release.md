@@ -10,11 +10,14 @@ Module distribution is a tagged GitHub Release tarball (no npm publish needed). 
 - [ ] iOS xcframework (needs a macOS runner); until then the package is Android-only. State this in the README of the release.
 
 ## Code release procedure (module tarball)
-0. Shortcut for steps 1-2: `scripts/cut-release.sh major|minor|patch [--dry-run]` (`pnpm release patch`). Needs a clean `trunk` that is not behind `origin`; bumps every version field via `set-version.sh`, commits `Release vX.Y.Z`, creates the annotated tag, and pushes branch + tag in one atomic push. `--dry-run` prints the plan only. Does not touch CHANGELOG.md.
+0. Shortcut for steps 1-2: `scripts/cut-release.sh major|minor|patch [--dry-run]` (`pnpm release patch`). Needs a clean `trunk` that is not behind `origin`; bumps every version field via `set-version.sh`, commits `Release vX.Y.Z`, creates the annotated tag, and pushes branch + tag in one atomic push. `--dry-run` prints the plan only. Refuses when CHANGELOG.md has no entries under `## Unreleased`; moves them into a `## X.Y.Z - date` section in the release commit and lists them (`- date, bundle: summary`) in the commit and tag message (`scripts/changelog.py`, `--dry-run` prints the message).
 1. `scripts/set-version.sh X.Y.Z`; commit; push to `trunk`.
 2. Tag `vX.Y.Z` and push the tag. `native.yml` checks tag vs versions (`scripts/check-version.sh`), runs tests, builds Android
    (3 ABIs; iOS is out of the pipeline since 0.0.6, the package is Android-only), `npm pack`s the module and attaches the `.tgz` to the GitHub Release.
 3. slbop pins the release asset URL in `package.json`; the data pipeline is independent (`data.yml`, `data-latest` release).
+
+## Changelog
+Every bundle (`.bundle-seq` `X.Y.Z-N`) adds an entry under `## Unreleased` in CHANGELOG.md: `- YYYY-MM-DD, X.Y.Z-N: **Bold one-line summary.** Details.` (format in the file header). `package-bundle.sh` warns when the bundle id has no entry; `scripts/changelog.py check` also flags entries whose version is not Cargo.toml's. Tests: `scripts/test-changelog.sh`.
 
 ## Data release procedure
 1. `data.yml` with `publish=false` (dry run: stage, sizes, manifest) until three consecutive runs are clean.

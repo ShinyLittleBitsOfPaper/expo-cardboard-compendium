@@ -2,7 +2,9 @@
 # Cut a code release: bump the version, commit, tag vX.Y.Z and push the commit and the tag to GitHub.
 #   scripts/cut-release.sh major|minor|patch [--dry-run]
 # The tag push is what starts the release build (.github/workflows/native.yml). The data pipeline is separate (docs/release.md).
-# Steps: check preconditions -> scripts/set-version.sh (every version field + Cargo.lock) -> commit "Release vX.Y.Z" -> annotated tag
+# Steps: check preconditions -> scripts/set-version.sh (every version field + Cargo.lock) -> scripts/changelog.py release (moves
+# CHANGELOG.md's Unreleased entries into "## X.Y.Z - date") -> commit "Release vX.Y.Z" with one "- date, bundle: summary" line per
+# Unreleased entry in the body -> annotated tag (same message)
 # -> `git push --atomic <remote> <branch> vX.Y.Z`. Nothing is pushed if any earlier step fails; --dry-run only prints the plan.
 # Overrides: RELEASE_BRANCH (default trunk), RELEASE_REMOTE (default origin).
 set -euo pipefail
@@ -32,6 +34,7 @@ echo "release: $CUR -> $NEXT ($BUMP), tag $TAG, branch $BRANCH, remote $REMOTE"
 
 # ---- preconditions -------------------------------------------------------------------------------------------------
 [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ] || { echo "not on '$BRANCH' (set RELEASE_BRANCH to release from another branch)" >&2; exit 1; }
+MSG_BODY="$(scripts/changelog.py message)" || { echo "add entries under '## Unreleased' in CHANGELOG.md first" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "working tree is not clean; commit or stash first" >&2; git status --short >&2; exit 1; }
 git remote get-url "$REMOTE" >/dev/null 2>&1 || { echo "no git remote '$REMOTE'" >&2; exit 1; }
 git fetch --quiet "$REMOTE" "$BRANCH" --tags
@@ -44,6 +47,7 @@ if git rev-parse --quiet --verify "refs/remotes/$REMOTE/$BRANCH" >/dev/null; the
 fi
 
 if [ "$DRY" = 1 ]; then
+  printf 'commit/tag message:\nRelease %s\n\n%s\n' "$TAG" "$MSG_BODY"
   echo "dry run: would run scripts/set-version.sh $NEXT, commit 'Release $TAG', tag $TAG and push $BRANCH + $TAG to $REMOTE"
   exit 0
 fi
@@ -51,8 +55,11 @@ fi
 # ---- bump, commit, tag, push ---------------------------------------------------------------------------------------
 scripts/set-version.sh "$NEXT"
 scripts/check-version.sh "$TAG"
+scripts/changelog.py release "$NEXT"
+MSG_FILE="$(mktemp)"; trap 'rm -f "$MSG_FILE"' EXIT
+printf 'Release %s\n\n%s\n' "$TAG" "$MSG_BODY" > "$MSG_FILE"
 git add -u
-git commit --quiet -m "Release $TAG"
-git tag -a "$TAG" -m "Release $TAG"
+git commit --quiet -F "$MSG_FILE"
+git tag -a "$TAG" -F "$MSG_FILE"
 git push --atomic "$REMOTE" "$BRANCH" "$TAG"
 echo "pushed $TAG; the release build runs in GitHub Actions (native.yml)"
