@@ -14,6 +14,8 @@ Release sections before 0.0.13 were regrouped from the bundle ids (bundle `0.0.N
 
 ## Unreleased
 
+## 0.0.13 - 2026-11-17
+
 ### Added
 - 2026-11-17, 0.0.12-4: **Module exports `MODULE_FORMAT` (and the `ModuleFormat` type).** `{coqd: 4, coqi: 2}`, the data formats this build reads (was internal to `sync/plan.ts`), so an app can check the data on disk at startup instead of hard-coding the number (slbop 0.47.0-3 does). Export only, no behaviour change; not compiled or run here (needs `tsc`/`npm test` in the module). Needs a release (v0.0.13) and a slbop pin bump before slbop can read it; until then slbop falls back to its own constant.
 
