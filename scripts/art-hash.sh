@@ -46,7 +46,7 @@ case "$CMD" in
     N="$(wc -l < data/art/todo.tsv)"
     echo "$N illustrations without a hash"
     if [ "$NOFETCH" = 0 ] && [ "$N" -gt 0 ]; then
-      scripts/fetch-art.sh data/art/todo.tsv "$ART_DIR" "${PARALLEL:-8}"
+      bash scripts/fetch-art.sh data/art/todo.tsv "$ART_DIR" "${PARALLEL:-8}"
     fi
     run_hash --images "$ART_DIR"
     echo "next: scripts/art-hash.sh release   (uploads $CACHE; the next data run publishes the new overlay)"

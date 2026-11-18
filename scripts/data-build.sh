@@ -56,8 +56,8 @@ else
   rm -f "$PREVM"; PSTAMP=""; PPRICE=""; echo "no published (v2) release yet: first release"
 fi
 
-scripts/daily.sh
-scripts/daily-prices.sh
+bash scripts/daily.sh
+bash scripts/daily-prices.sh
 
 CARDS="$(ls -1 data/daily/releases/cards-*.coqd | sort | tail -1)"; PRICES="$(ls -1 data/prices/releases/prices-*.coqd | sort | tail -1)"
 CS="$(basename "$CARDS" .coqd)"; CS="${CS#cards-}"; PS="$(basename "$PRICES" .coqd)"; PS="${PS#prices-}"
@@ -83,7 +83,7 @@ if [ -n "$PPRICE" ] && [ "$PS" != "$PPRICE" ]; then
   PSPEC+=",patch=$STAGE/prices-$PPRICE-to-$PS.coqp"
 fi
 ARGS=(--base "$CSPEC" --index "$ISPEC" --overlay "$PSPEC")
-scripts/data-art.sh "$STAGE" "$CARDS" "$CS" "$PREVM"
+bash scripts/data-art.sh "$STAGE" "$CARDS" "$CS" "$PREVM"
 [ -s "$STAGE/art.spec" ] && ARGS+=(--overlay "$(cat "$STAGE/art.spec")")
 [ -f "$PREVM" ] && ARGS+=(--prev "$PREVM")
 [ "${REBASE:-0}" = 1 ] && ARGS+=(--rebase)

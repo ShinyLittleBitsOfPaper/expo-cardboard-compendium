@@ -39,9 +39,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --release
       - run: cargo build --release -p coqc
-      - run: scripts/test-data-pipeline.sh
+      - run: bash scripts/test-data-pipeline.sh
       - name: Build and verify the data
-        run: scripts/data-build.sh
+        run: bash scripts/data-build.sh
       - name: Keep the build as an artifact when not publishing
         if: env.PUBLISH != 'true'
         uses: actions/upload-artifact@v4
@@ -51,4 +51,4 @@ jobs:
           retention-days: 3
       - name: Publish
         if: env.PUBLISH == 'true'
-        run: scripts/data-publish.sh
+        run: bash scripts/data-publish.sh

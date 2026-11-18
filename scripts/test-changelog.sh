@@ -31,12 +31,12 @@ cat > CHANGELOG.md <<'EOF'
 - 2025-12-31, 0.0.9-1: **Old.** Old.
 EOF
 git add -A; git commit -qm init; git push -q origin trunk 2>/dev/null
-scripts/cut-release.sh patch --dry-run | tee "$t/out.txt" >/dev/null
+bash scripts/cut-release.sh patch --dry-run | tee "$t/out.txt" >/dev/null
 grep -q '^- 2026-01-02, 0.1.0-2: Plain entry without bold$' "$t/out.txt"
 grep -q '^- 2026-01-01, 0.1.0-1: Bold summary here$' "$t/out.txt"
-scripts/changelog.py check 0.1.0-2 2>/dev/null
+python3 scripts/changelog.py check 0.1.0-2 2>/dev/null
 ! scripts/changelog.py check 0.1.0-9 2>/dev/null
-scripts/cut-release.sh patch >/dev/null
+bash scripts/cut-release.sh patch >/dev/null
 git log -1 --format=%B | grep -q '^- 2026-01-01, 0.1.0-1: Bold summary here$'
 git tag -l -n9 v0.1.1 | grep -q '0.1.0-2: Plain entry'
 grep -q '^## 0.1.1 - ' CHANGELOG.md

@@ -4,12 +4,12 @@
   "description": "Repo-level maintenance commands (the publishable module is in modules/expo-cardboard-compendium).",
   "scripts": {
     "build": "cargo build --release",
-    "release": "scripts/cut-release.sh",
-    "art:status": "scripts/art-hash.sh status",
-    "art:update": "scripts/art-hash.sh update",
-    "art:release": "scripts/art-hash.sh release",
-    "art:release:dry": "scripts/art-hash.sh release --dry-run",
-    "art:fetch-samples": "scripts/fetch-art-crops.sh ../card-art 300",
-    "test:art": "scripts/test-art-pipeline.sh"
+    "release": "bash scripts/cut-release.sh",
+    "art:status": "bash scripts/art-hash.sh status",
+    "art:update": "bash scripts/art-hash.sh update",
+    "art:release": "bash scripts/art-hash.sh release",
+    "art:release:dry": "bash scripts/art-hash.sh release --dry-run",
+    "art:fetch-samples": "bash scripts/fetch-art-crops.sh ../card-art 300",
+    "test:art": "bash scripts/test-art-pipeline.sh"
   }
 }

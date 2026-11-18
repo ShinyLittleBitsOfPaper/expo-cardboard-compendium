@@ -20,5 +20,5 @@ d = json.load(open(p)); d["version"] = v
 json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")
 PY
 cargo update --workspace --offline >/dev/null 2>&1 || cargo update --workspace >/dev/null
-scripts/check-version.sh "v$V"
+bash scripts/check-version.sh "v$V"
 echo "now: commit, then tag v$V and push the tag"

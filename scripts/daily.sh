@@ -24,7 +24,7 @@ SUMMARY='^(skipped|oracle cards|printings|images|derived key|healed printings|ep
 [ -x "$BIN" ] || { echo "build first: cargo build --release" >&2; exit 1; }
 mkdir -p "$WORK/raw" "$WORK/releases" "$WORK/patches"
 
-scripts/fetch-bulk.sh "$WORK/raw" ${FETCH_ARGS[@]+"${FETCH_ARGS[@]}"}
+bash scripts/fetch-bulk.sh "$WORK/raw" ${FETCH_ARGS[@]+"${FETCH_ARGS[@]}"}
 RAW="$WORK/raw/default-cards.jsonl"
 # Release label = updated_at as YYYYMMDDHHMM (two bulk refreshes per day must not collide);
 # the format's source_date stays YYYYMMDD.

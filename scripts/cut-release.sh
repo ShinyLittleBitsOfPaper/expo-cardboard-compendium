@@ -34,7 +34,7 @@ echo "release: $CUR -> $NEXT ($BUMP), tag $TAG, branch $BRANCH, remote $REMOTE"
 
 # ---- preconditions -------------------------------------------------------------------------------------------------
 [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ] || { echo "not on '$BRANCH' (set RELEASE_BRANCH to release from another branch)" >&2; exit 1; }
-MSG_BODY="$(scripts/changelog.py message)" || { echo "add entries under '## Unreleased' in CHANGELOG.md first" >&2; exit 1; }
+MSG_BODY="$(python3 scripts/changelog.py message)" || { echo "add entries under '## Unreleased' in CHANGELOG.md first" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "working tree is not clean; commit or stash first" >&2; git status --short >&2; exit 1; }
 git remote get-url "$REMOTE" >/dev/null 2>&1 || { echo "no git remote '$REMOTE'" >&2; exit 1; }
 git fetch --quiet "$REMOTE" "$BRANCH" --tags
@@ -53,9 +53,9 @@ if [ "$DRY" = 1 ]; then
 fi
 
 # ---- bump, commit, tag, push ---------------------------------------------------------------------------------------
-scripts/set-version.sh "$NEXT"
-scripts/check-version.sh "$TAG"
-scripts/changelog.py release "$NEXT"
+bash scripts/set-version.sh "$NEXT"
+bash scripts/check-version.sh "$TAG"
+python3 scripts/changelog.py release "$NEXT"
 MSG_FILE="$(mktemp)"; trap 'rm -f "$MSG_FILE"' EXIT
 printf 'Release %s\n\n%s\n' "$TAG" "$MSG_BODY" > "$MSG_FILE"
 git add -u

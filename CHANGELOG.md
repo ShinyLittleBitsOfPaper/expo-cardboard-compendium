@@ -14,6 +14,9 @@ Release sections before 0.0.13 were regrouped from the bundle ids (bundle `0.0.N
 
 ## Unreleased
 
+### Fixed
+- 2026-11-18, 0.0.13-3: **Scripts and workflows no longer depend on the executable bit.** The nightly data release failed again with `scripts/data-build.sh` not executable: it is mode 644 in both the 0.0.12-2 and 0.0.13-1 bundles (so in the working tree you packaged from, whatever the git index says), while `data.yml` ran it directly. Re-pushing `chmod +x` cannot stick if each ingest copies the bundle's 644 back (`ingest-bundle.sh` does `cp -a`, which preserves the tarball's modes, and then commits them); I could not confirm where the bit is first lost, only that it was already gone in 0.0.12-2. Now every direct call is `bash scripts/x.sh` / `python3 scripts/x.py`: `data.yml`, `native.yml`, `package.json` scripts, and the scripts that call each other (`data-build.sh`, `daily.sh`, `art-hash.sh`, `cut-release.sh`, `set-version.sh`, `test-changelog.sh`). `data-build.sh` and `gen-fixtures.py` are also 755 in this bundle. Tested: `bash -n` on the edited scripts and `test-changelog.sh` (passes). NOT run: the data pipeline test or GitHub Actions.
+
 ### Changed
 - 2026-11-18, 0.0.13-2: **`package-bundle.sh` checks the previous bundle's changelog entry instead of the new one.** The 0.0.12-3 check warned on every bundle you package for a session (the new id's entry is written in that session), including the first one after a release. Now it looks for an entry for `.bundle-seq` as it was before the bump, anywhere in the file (a release moves entries out of Unreleased), and only warns. `changelog.py check` is unchanged. Not run end to end (`bash -n` only).
 
