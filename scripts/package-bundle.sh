@@ -21,12 +21,17 @@ while [ $# -gt 0 ]; do
 done
 
 cargo_version="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
-seq="$(cat .bundle-seq 2>/dev/null || echo "$cargo_version-0")"
+prev_seq="$(cat .bundle-seq 2>/dev/null || true)"   # the bundle handed over last: its work is what this package carries
+seq="${prev_seq:-$cargo_version-0}"
 version="${seq%-*}"; n="${seq##*-}"
 if [ "$version" != "$cargo_version" ]; then version="$cargo_version"; n=0; fi   # new release restarts at -1
 if [ "$BUMP" = 1 ]; then n=$((n + 1)); fi
 echo "$version-$n" > .bundle-seq
-scripts/changelog.py check "$version-$n" || echo "warning: add a CHANGELOG.md entry for bundle $version-$n under '## Unreleased' (see the header of CHANGELOG.md)" >&2
+# Every bundle needs a CHANGELOG entry; the one that must exist now is the previous bundle's (the new id's entry is written in the
+# next session). Searched in the whole file because a release since then moved it out of Unreleased.
+if [ -n "$prev_seq" ] && ! grep -qE "^- [0-9]{4}-[0-9]{2}-[0-9]{2}, ${prev_seq}:" CHANGELOG.md; then
+  echo "warning: CHANGELOG.md has no entry for the previous bundle $prev_seq (see the header of CHANGELOG.md)" >&2
+fi
 name="expo-cardboard-compendium-$version-$n"
 
 mkdir -p "$OUT"

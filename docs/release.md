@@ -17,7 +17,7 @@ Module distribution is a tagged GitHub Release tarball (no npm publish needed). 
 3. slbop pins the release asset URL in `package.json`; the data pipeline is independent (`data.yml`, `data-latest` release).
 
 ## Changelog
-Every bundle (`.bundle-seq` `X.Y.Z-N`) adds an entry under `## Unreleased` in CHANGELOG.md: `- YYYY-MM-DD, X.Y.Z-N: **Bold one-line summary.** Details.` (format in the file header). `package-bundle.sh` warns when the bundle id has no entry; `scripts/changelog.py check` also flags entries whose version is not Cargo.toml's. Tests: `scripts/test-changelog.sh`.
+Every bundle (`.bundle-seq` `X.Y.Z-N`) adds an entry under `## Unreleased` in CHANGELOG.md: `- YYYY-MM-DD, X.Y.Z-N: **Bold one-line summary.** Details.` (format in the file header). `package-bundle.sh` warns when the PREVIOUS bundle id (`.bundle-seq` before the bump) has no entry anywhere in CHANGELOG.md; `scripts/changelog.py check` also flags entries whose version is not Cargo.toml's. Tests: `scripts/test-changelog.sh`.
 
 ## Data release procedure
 1. `data.yml` with `publish=false` (dry run: stage, sizes, manifest) until three consecutive runs are clean.

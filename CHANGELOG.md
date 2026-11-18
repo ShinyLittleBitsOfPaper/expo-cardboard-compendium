@@ -14,6 +14,9 @@ Release sections before 0.0.13 were regrouped from the bundle ids (bundle `0.0.N
 
 ## Unreleased
 
+### Changed
+- 2026-11-18, 0.0.13-2: **`package-bundle.sh` checks the previous bundle's changelog entry instead of the new one.** The 0.0.12-3 check warned on every bundle you package for a session (the new id's entry is written in that session), including the first one after a release. Now it looks for an entry for `.bundle-seq` as it was before the bump, anywhere in the file (a release moves entries out of Unreleased), and only warns. `changelog.py check` is unchanged. Not run end to end (`bash -n` only).
+
 ## 0.0.13 - 2026-11-17
 
 ### Added
