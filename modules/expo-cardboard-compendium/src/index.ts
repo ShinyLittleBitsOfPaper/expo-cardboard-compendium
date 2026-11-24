@@ -74,6 +74,17 @@ export const matchArtHash = (
   query: { hashes: string[] } | { path: string; card?: boolean },
   o: { maxDistance?: number; margin?: number } = {},
 ) => call<ArtMatch>('matchArtHash', { rows, ...query, ...o });
+/**
+ * Nearest art over the WHOLE dataset (0.0.13-4), independent of name or set: the `limit` (default 40) printings closest in art
+ * to the photo, within `maxDistance` bits (default 12), nearest first. Use it as a second candidate set to intersect with the
+ * name/set candidates, e.g. to recover a misread name. Printings sharing one art tie, so one art can fill the list; `total` counts
+ * every row in range before `limit`, `margin` is the lead over the next DISTINCT art (null when there is none).
+ */
+export type NearestArt = { ranked: { row: Row; distance: number }[]; best: number | null; margin: number | null; total: number };
+export const nearestArtHash = (
+  query: { hashes: string[] } | { path: string; card?: boolean },
+  o: { limit?: number; maxDistance?: number } = {},
+) => call<NearestArt>('nearestArtHash', { ...query, ...o });
 /** Rows of many Scryfall ids at once, in order; null for an unknown id. */
 export const rowsOf = (ids: string[]) => call<(Row | null)[]>('rowsOf', { ids });
 /** Cards of many Scryfall ids at once, in order; null for an unknown id. `prices` adds `card.prices` (MTGJSON, needs the prices overlay). */

@@ -242,6 +242,47 @@ impl Engine {
         }))
     }
 
+    /// Nearest art over the WHOLE dataset (0.0.13-4), independent of any name or set: scans every live row of the attached
+    /// `arthash` overlay and returns the `limit` closest printings to the photo's query hashes (smallest Hamming distance to any
+    /// of them), nearest first, keeping only those within `max_distance`. `best` is the nearest distance, `margin` how many bits
+    /// the next-best DISTINCT art is behind it (null when there is none), `total` how many rows were within `max_distance`
+    /// before `limit` cut the list. Printings sharing one art tie by construction, so a hit stands for every printing of that art.
+    pub fn nearest_art(&self, q: &[u64], limit: usize, max_distance: u32) -> Result<Value, String> {
+        let (_, o) = self.overlays.iter().find(|(i, _)| i == "arthash").ok_or("arthash overlay not attached (attachOverlay id \"arthash\")")?;
+        let (def, t) = o.store.table("art").ok_or("arthash overlay has no art table")?;
+        let col = |name: &str| def.columns.iter().position(|c| c.name == name).ok_or_else(|| format!("arthash overlay lacks {name}"));
+        let (coqc_format::table::ColData::Int(hi), coqc_format::table::ColData::Int(lo)) = (&t.cols[col("phash_hi")?], &t.cols[col("phash_lo")?]) else {
+            return Err("bad arthash column".into());
+        };
+        let live = &self.store.tables[self.primary].tomb;
+        let mut hits: Vec<(u32, u32, u64)> = Vec::new();
+        for r in 0..hi.len().min(lo.len()) {
+            if live.get(r).is_none_or(|t| *t) {
+                continue;
+            }
+            if let (Some(h), Some(l)) = (hi[r], lo[r]) {
+                let hash = ((h as u64) << 32) | (l as u64 & 0xffff_ffff);
+                let d = q.iter().map(|&x| coqc_phash::hamming(x, hash)).min().unwrap_or(64);
+                if d <= max_distance {
+                    hits.push((d, r as u32, hash));
+                }
+            }
+        }
+        hits.sort();
+        let best = hits.first().map(|x| x.0);
+        let margin = match (best, hits.iter().find(|x| Some(x.2) != hits.first().map(|f| f.2))) {
+            (Some(b), Some(n)) => Some(n.0 - b),
+            _ => None,
+        };
+        let total = hits.len();
+        Ok(json!({
+            "ranked": hits.iter().take(limit).map(|(d, r, _)| json!({"row": r, "distance": d})).collect::<Vec<_>>(),
+            "best": best,
+            "margin": margin,
+            "total": total,
+        }))
+    }
+
     /// MTGJSON prices of printing rows from the attached `prices` overlay, Scryfall-shaped (`usd`, `usd_foil`, `usd_etched`, `eur`,
     /// `eur_foil`, `eur_etched`: strings with two decimals, null = no price). `usd*` is TCGplayer retail, `eur*` Cardmarket retail.
     /// 0.0.12: also `cardkingdom`, `cardkingdom_foil`, `cardkingdom_etched` (USD) and `cardsphere`, `cardsphere_foil`, `cardsphere_etched` (USD).
@@ -443,6 +484,14 @@ impl Engine {
                 };
                 let num = |k: &str, d: u32| a.get(k).and_then(Value::as_u64).map_or(d, |v| v as u32);
                 self.match_art(&rows, &q, num("maxDistance", 24), num("margin", 2))
+            }
+            "nearestArtHash" => {
+                let q: Vec<u64> = match a.get("hashes").and_then(Value::as_array) {
+                    Some(hs) => hs.iter().map(|h| h.as_str().and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or("bad hash (16 hex digits)")).collect::<Result<_, _>>()?,
+                    None => self.hash_image(Path::new(s("path").ok_or("give hashes or path")?), a.get("card").and_then(Value::as_bool) == Some(true))?,
+                };
+                let num = |k: &str, d: u64| a.get(k).and_then(Value::as_u64).unwrap_or(d);
+                self.nearest_art(&q, num("limit", 40) as usize, num("maxDistance", 12) as u32)
             }
             "getPrices" => {
                 let rows = a.get("rows").and_then(Value::as_array).ok_or("missing rows")?;

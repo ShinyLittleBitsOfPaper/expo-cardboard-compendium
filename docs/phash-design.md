@@ -98,3 +98,5 @@ Truth is the best art match among ALL printings in 10 of 14; truth within 6/8/10
 - TS: `hashImage`, `matchArtHash`, `ArtMatch` in the module index. Kotlin/Swift needed no change (one generic `call`). Added both methods to the fuzz list.
 - Not done: slbop P4 (scanner ranking signal + overlay download in the app), highlight-clipping experiment, per-printing art hashes (stamped promos share the illustration's hash, so a prerelease-stamped printing cannot be told from the plain one by art).
 - Native size: the engine now links an image decoder for jpeg+png; size delta not measured.
+
+- **0.0.13-4 nearest art**: `nearestArtHash {hashes|path, card?, limit=40, maxDistance=12}` -> `{ranked:[{row,distance}], best, margin, total}` scans every live row of the `arthash` overlay (no candidate rows needed), so art can seed candidates itself and be intersected with the name/set candidates. Printings sharing one art tie. Brute force over ~119k rows x 9 query hashes, not timed on device.

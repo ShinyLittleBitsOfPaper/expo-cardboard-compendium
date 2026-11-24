@@ -308,6 +308,18 @@ fn art_hash_match() {
     // too far from everything: not confident whatever the margin
     let bad = e.call("matchArtHash", &json!({"rows": [0, 2], "hashes": [format!("{:016x}", 0x00ff_ff00_00ff_ff00u64)], "maxDistance": 2})).unwrap();
     assert_eq!(bad["confident"], false);
+    // nearest art over the whole dataset (0.0.13-4): no rows given, every hashed live row is a candidate
+    let n = e.call("nearestArtHash", &json!({"hashes": [near_a.clone()], "maxDistance": 8})).unwrap();
+    let nr = n["ranked"].as_array().unwrap();
+    assert_eq!(nr.len(), 2, "the two printings sharing art A are within 8 bits, B and the unhashed row are not");
+    assert_eq!((nr[0]["distance"].clone(), nr[1]["distance"].clone()), (json!(3), json!(3)));
+    assert_eq!(n["best"], 3);
+    assert_eq!(n["total"], 2);
+    assert_eq!(n["margin"], json!(null), "one distinct art within range");
+    let wide = e.call("nearestArtHash", &json!({"hashes": [near_a.clone()], "maxDistance": 64, "limit": 1})).unwrap();
+    assert_eq!(wide["ranked"].as_array().unwrap().len(), 1);
+    assert_eq!(wide["total"], 3);
+    assert_eq!(wide["margin"], json!(db - 3));
     // image hashing: a missing file is an error, malformed hashes too
     assert!(e.call("hashImage", &json!({"path": dir.join("nope.jpg")})).is_err());
     assert!(e.call("matchArtHash", &json!({"rows": [0], "hashes": ["zz"]})).is_err());
