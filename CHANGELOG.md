@@ -14,6 +14,8 @@ Release sections before 0.0.13 were regrouped from the bundle ids (bundle `0.0.N
 
 ## Unreleased
 
+## 0.0.14 - 2026-11-24
+
 ### Added
 - 2026-11-24, 0.0.13-4: **`nearestArtHash`: nearest art over the whole dataset, independent of name or set.** `matchArtHash` only ranks rows the caller already picked, so a misread name left art nothing to compare against. New `Engine::nearest_art` scans every live row of the attached `arthash` overlay and returns the `limit` (40) closest printings within `maxDistance` (12) bits with `best`, `margin` over the next distinct art, and `total`; exported as `nearestArtHash` (hashes or image path, like `matchArtHash`). Test added to `art_hash_match`; `cargo test -p coqc-engine --test engine` passes (rust 1.100). Needs a v0.0.14 tag and the slbop pin bumped before the app can call it; slbop does not use it yet. The default 12-bit range is a guess (the real-art numbers put same-art at <=10 bits) and the full scan of ~119k rows is not timed on a device.
 
